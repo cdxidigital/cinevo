@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { b64urlToBytes, bytesToB64url, derSigToRaw, sha256, verifyAssertion } from "./passkey-crypto.ts";
+import { b64urlToBytes, bytesToB64url, derSigToRaw, pageOrigin, sha256, verifyAssertion } from "./passkey-crypto.ts";
 
 function rawToDer(raw: Uint8Array): Uint8Array {
   const size = raw.length / 2;
@@ -63,4 +63,68 @@ test("verifies an ES256 passkey assertion", async () => {
     rpId,
   });
   assert.equal(verified.signCount, 0);
+});
+
+test("accepts only the actual, approved relying party", () => {
+  const local = new Request("http://localhost:8080/api/passkey", {
+    method: "POST", headers: { Origin: "http://localhost:8080" },
+  });
+  assert.deepEqual(pageOrigin(local), { origin: "http://localhost:8080", rpId: "localhost" });
+
+  const spoofed = new Request("https://cinevo.fourtee2.digital/api/passkey", {
+    method: "POST", headers: { Origin: "https://attacker.example" },
+  });
+  assert.equal(pageOrigin(spoofed), null);
+
+  const unrelatedHost = new Request("https://attacker.example/api/passkey", {
+    method: "POST", headers: { Origin: "https://attacker.example" },
+  });
+  assert.equal(pageOrigin(unrelatedHost), null);
+
+  const prod = new Request("https://cinevo.fourtee2.digital/api/passkey", {
+    method: "POST", headers: { Origin: "https://cinevo.fourtee2.digital" },
+  });
+  assert.deepEqual(pageOrigin(prod), { origin: "https://cinevo.fourtee2.digital", rpId: "cinevo.fourtee2.digital" });
+});
+
+async function signedFixture() {
+  const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+  const publicKeySpki = new Uint8Array(await crypto.subtle.exportKey("spki", pair.publicKey));
+  const challenge = "trusted-challenge";
+  const origin = "https://cinevo.fourtee2.digital";
+  const rpId = "cinevo.fourtee2.digital";
+  const clientDataJSON = new TextEncoder().encode(JSON.stringify({ type: "webauthn.get", challenge, origin }));
+  const authenticatorData = new Uint8Array(37);
+  authenticatorData.set(await sha256(new TextEncoder().encode(rpId)), 0);
+  authenticatorData[32] = 1;
+  const signed = new Uint8Array(authenticatorData.length + 32);
+  signed.set(authenticatorData);
+  signed.set(await sha256(clientDataJSON), authenticatorData.length);
+  const signature = new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, pair.privateKey, signed));
+  return { publicKeySpki, algorithm: -7, authenticatorData, clientDataJSON, signature, challenge, origin, rpId };
+}
+
+test("rejects mismatched passkey challenge", async () => {
+  const fixture = await signedFixture();
+  await assert.rejects(() => verifyAssertion({ ...fixture, challenge: "replayed-challenge" }), /challenge did not match/);
+});
+test("rejects mismatched passkey origin", async () => {
+  const fixture = await signedFixture();
+  await assert.rejects(() => verifyAssertion({ ...fixture, origin: "https://attacker.example" }), /different address/);
+});
+test("rejects a missing passkey user-presence flag", async () => {
+  const fixture = await signedFixture();
+  const authenticatorData = fixture.authenticatorData.slice();
+  authenticatorData[32] = 0;
+  await assert.rejects(() => verifyAssertion({ ...fixture, authenticatorData }), /not approved/);
+});
+test("rejects mismatched relying-party hash", async () => {
+  const fixture = await signedFixture();
+  await assert.rejects(() => verifyAssertion({ ...fixture, rpId: "attacker.example" }), /different address/);
+});
+test("rejects a tampered passkey signature", async () => {
+  const fixture = await signedFixture();
+  const signature = fixture.signature.slice();
+  signature[0] ^= 0xff;
+  await assert.rejects(() => verifyAssertion({ ...fixture, signature }), /does not match/);
 });

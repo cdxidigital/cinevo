@@ -66,17 +66,24 @@ export function passkeyHostError(_hostname: string): string | null {
 }
 
 export function pageOrigin(request: Request): { origin: string; rpId: string } | null {
-  const header = request.headers.get("origin");
-  if (!header) return null;
-  let url: URL;
+  // WebAuthn's expected RP/origin must be verified against this service's URL,
+  // never be inferred solely from an arbitrary caller-supplied Origin header.
+  const origin = request.headers.get("origin");
+  if (!origin) return null;
   try {
-    url = new URL(header);
+    const claimed = new URL(origin);
+    const served = new URL(request.url);
+    const host = served.hostname.toLowerCase();
+    const local = host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+    const preview = host.endsWith(".grok-sandbox.com") || host.endsWith(".grok.me");
+    const deployment = host === "cinevo.fourtee2.digital" || host.endsWith(".vercel.app");
+    if (!local && !preview && !deployment) return null;
+    if (claimed.origin !== served.origin) return null;
+    if (served.protocol !== "https:" && !local) return null;
+    return { origin: served.origin, rpId: served.hostname };
   } catch {
     return null;
   }
-  const local = url.hostname === "localhost" || isIpHost(url.hostname);
-  if (url.protocol !== "https:" && !local) return null;
-  return { origin: url.origin, rpId: url.hostname };
 }
 
 export async function verifyAssertion(input: {

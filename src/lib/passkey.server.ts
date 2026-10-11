@@ -89,7 +89,6 @@ export async function registerPasskey(request: Request, body: {
   const where = pageOrigin(request);
   if (!where) throw new Error("This page could not confirm its address. Reload and try again.");
   const email = (body.email || "").trim().toLowerCase();
-  const name = (body.name || "").trim() || email.split("@")[0] || "Member";
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Enter the email for this house.");
   if (!body.challengeId || !body.credentialId || !body.publicKey || !body.clientDataJSON || !body.authenticatorData || !body.signature) {
     throw new Error("Passkey response was incomplete.");
@@ -107,20 +106,16 @@ export async function registerPasskey(request: Request, body: {
     origin: where.origin,
     rpId: where.rpId,
   });
+  // A passkey proves possession of a key, not ownership of an email address.
+  // Only an authenticated owner can attach a credential to an existing account.
+  const signedIn = await userFromRequest(request);
+  if (!signedIn) throw new Error("Create or sign in to your account first, then add a passkey.");
   const ctx = await auth.$context;
   const existing = await ctx.internalAdapter.findUserByEmail(email);
-  const signedIn = await userFromRequest(request);
-  let userId = "";
-  if (existing?.user) {
-    if (!signedIn || signedIn !== existing.user.id) {
-      throw new Error("That email already has a house. Sign in, then add a passkey.");
-    }
-    userId = existing.user.id;
-  } else {
-    const user = await ctx.internalAdapter.createUser({ email, name, emailVerified: true });
-    if (!user?.id) throw new Error("Could not create that account.");
-    userId = user.id;
+  if (!existing?.user || existing.user.id !== signedIn) {
+    throw new Error("That email does not match the signed-in account.");
   }
+  const userId = signedIn;
   const sql = await getSql();
   const taken = await sql<{ user_id: string }>`select user_id from cinevo_passkey where credential_id = ${body.credentialId}`;
   if (taken[0] && taken[0].user_id !== userId) throw new Error("That passkey is already on another house.");
@@ -179,25 +174,34 @@ export async function openDesk() {
 
 export async function readDesk(secret: string) {
   const sql = await getSql();
-  const rows = await sql<{ status: string; token: string | null }>`
-    select status, token from cinevo_desk where secret = ${secret} and expires_at > now()
+  // DELETE RETURNING consumes the *previous* token atomically, so concurrent
+  // QR pollers can never both receive a usable session token.
+  const claimed = await sql<{ token: string | null }>`
+    delete from cinevo_desk
+    where secret = ${secret} and status = 'approved' and expires_at > now()
+    returning token
   `;
-  const row = rows[0];
-  if (!row) return { status: "expired" as const };
-  if (row.status === "approved" && row.token) {
-    await sql`update cinevo_desk set token = null, status = 'done' where secret = ${secret}`;
-    return { status: "approved" as const, token: row.token };
-  }
-  return { status: "pending" as const };
+  if (claimed[0]?.token) return { status: "approved" as const, token: claimed[0].token };
+  const rows = await sql<{ status: string }>`
+    select status from cinevo_desk where secret = ${secret} and expires_at > now()
+  `;
+  return rows[0]?.status === "pending" ? { status: "pending" as const } : { status: "expired" as const };
 }
 
 export async function approveDesk(request: Request, secret: string) {
   const userId = await userFromRequest(request);
   if (!userId) throw new Error("Sign in on this phone first.");
   const sql = await getSql();
-  const rows = await sql<{ status: string }>`select status from cinevo_desk where secret = ${secret} and expires_at > now()`;
-  if (!rows[0] || rows[0].status === "done") throw new Error("That code expired. Scan a new one.");
+  const rows = await sql<{ status: string }>`
+    select status from cinevo_desk where secret = ${secret} and status = 'pending' and expires_at > now()
+  `;
+  if (!rows[0]) throw new Error("That code expired or has already been approved. Scan a new one.");
   const session = await issueSession(userId);
-  await sql`update cinevo_desk set status = 'approved', token = ${session.token} where secret = ${secret}`;
+  const saved = await sql<{ secret: string }>`
+    update cinevo_desk set status = 'approved', token = ${session.token}
+    where secret = ${secret} and status = 'pending' and expires_at > now()
+    returning secret
+  `;
+  if (!saved.length) throw new Error("That code was already used. Scan a new one.");
   return { ok: true as const };
 }

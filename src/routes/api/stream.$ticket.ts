@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { convertSegmentUrl, rewriteConvertPlaylist } from "@/lib/convert";
 import { loadTicket } from "@/lib/playback.server";
+import { assertSafeMediaEgress } from "@/lib/media-egress.server";
 
 function isLiveTranscode(url: string) {
   return url.includes("/transcode/") || /[?&]static=false/i.test(url);
@@ -38,14 +39,19 @@ function rewriteLoopback(next: string, origin: string) {
 async function fetchMedia(url: string, headers: Headers, method: "GET" | "HEAD") {
   let current = url;
   for (let hop = 0; hop < 4; hop += 1) {
+    await assertSafeMediaEgress(current);
     const upstream = await fetch(current, { method, headers, redirect: "manual" });
     if (upstream.status < 300 || upstream.status >= 400) return upstream;
     const location = upstream.headers.get("location");
     await upstream.body?.cancel();
     if (!location) return upstream;
-    current = rewriteLoopback(location, current);
+    const next = rewriteLoopback(location, current);
+    if (new URL(next).origin !== new URL(url).origin) {
+      throw new Error("Cross-origin media redirects are not allowed.");
+    }
+    current = next;
   }
-  return fetch(current, { method, headers, redirect: "follow" });
+  throw new Error("Media server redirected too many times.");
 }
 
 function passHeaders(upstream: Response, download: boolean, live: boolean) {

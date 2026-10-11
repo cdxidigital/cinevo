@@ -2,6 +2,7 @@ import { getSql } from "@/lib/db";
 import { factsFromJellyfin, factsFromPlex, type MediaFacts } from "@/lib/artwork-model";
 import { parsePlexMetadata } from "@/lib/plex";
 import { serverAddressError } from "@/lib/playback-urls";
+import { mediaEgressError } from "@/lib/media-egress.server";
 
 function ticketId() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID().replace(/-/g, "");
@@ -29,7 +30,7 @@ function jellyfinHeader(clientId: string, token: string) {
 
 export async function createArtTicket(input: { userId: string; provider: "plex" | "jellyfin"; uri: string; token: string; clientId?: string }) {
   const uri = input.uri.trim().replace(/\/$/, "");
-  const blocked = serverAddressError(uri);
+  const blocked = serverAddressError(uri) || (await mediaEgressError(uri));
   if (blocked) return { ok: false as const, error: blocked };
   if (!input.token.trim()) return { ok: false as const, error: "Missing library token." };
   const headers = input.provider === "plex" ? plexHeaders(input.clientId || "", input.token.trim()) : jellyfinHeader(input.clientId || "", input.token.trim());
@@ -52,7 +53,7 @@ async function plexItems(uri: string, token: string, clientId: string, keys: str
     const chunk = keys.slice(i, i + 20).map((key) => key.replace(/^plex-/, "")).filter(Boolean);
     if (!chunk.length) continue;
     try {
-      const res = await fetch(`${uri}/library/metadata/${chunk.join(",")}`, { headers, signal: AbortSignal.timeout(12000) });
+      const res = await fetch(`${uri}/library/metadata/${chunk.join(",")}`, { headers, redirect: "error", signal: AbortSignal.timeout(12000) });
       if (!res.ok) continue;
       const body = (await res.json()) as unknown;
       for (const row of parsePlexMetadata(body, "")) {
@@ -89,7 +90,7 @@ async function jellyfinItems(uri: string, token: string, clientId: string, userI
   });
   const path = userId ? `/Users/${encodeURIComponent(userId)}/Items?${params}` : `/Items?${params}`;
   try {
-    const res = await fetch(`${uri}${path}`, { headers, signal: AbortSignal.timeout(12000) });
+    const res = await fetch(`${uri}${path}`, { headers, redirect: "error", signal: AbortSignal.timeout(12000) });
     if (!res.ok) return [];
     const body = (await res.json()) as { Items?: unknown[] };
     return (body.Items || []).slice(0, 80).map((item) => {
@@ -113,6 +114,8 @@ export async function refreshArtwork(input: {
   ticket?: string;
 }) {
   const uri = input.uri.trim().replace(/\/$/, "");
+  const blocked = serverAddressError(uri) || (await mediaEgressError(uri));
+  if (blocked) return { ok: false as const, error: blocked };
   let ticketId = input.ticket?.trim() || "";
   if (ticketId) {
     const sql = await getSql();

@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
+import { serverAddressError } from "@/lib/playback-urls";
 import {
   parsePlexFolderPage,
   parsePlexMetadata,
@@ -23,7 +24,11 @@ function plexHeaders(clientId: string, token?: string) {
 }
 
 async function plexJson(url: string, headers: Record<string, string>, ms = 8000, init: RequestInit = {}): Promise<unknown> {
+  if (serverAddressError(url)) throw new Error("That Plex server address is not allowed.");
+  const { assertSafeMediaEgress } = await import("./media-egress.server");
+  await assertSafeMediaEgress(url);
   const res = await fetch(url, {
+    redirect: "error",
     ...init,
     headers: { ...headers, ...(init.headers as Record<string, string> | undefined) },
     signal: AbortSignal.timeout(ms),

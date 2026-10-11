@@ -8,6 +8,7 @@ const os = require("node:os");
 const crypto = require("node:crypto");
 const { exec, execFile, spawn } = require("node:child_process");
 const { ffmpegSegmentArgs, playlist } = require("./convert.cjs");
+const { parseByteRange } = require("./range.cjs");
 
 const VERSION = "0.3.0";
 const PORT = Number(process.env.CINEVO_NODE_PORT || 48184);
@@ -21,6 +22,9 @@ const CODE_TTL_MS = 10 * 60 * 1000;
 const SESSION_TTL_MS = 4 * 60 * 60 * 1000;
 
 function configDir() {
+  // Allows test runs (and managed installations) to keep their private config
+  // isolated instead of writing into an operator's actual home profile.
+  if (process.env.CINEVO_NODE_CONFIG_DIR) return path.resolve(process.env.CINEVO_NODE_CONFIG_DIR);
   const home = os.homedir();
   if (process.platform === "darwin") {
     return path.join(home, "Library", "Application Support", "CINEVO Node");
@@ -188,6 +192,51 @@ function rotateCode() {
   state.codeExpires = Date.now() + CODE_TTL_MS;
 }
 
+function trustedBrowserOrigin(value) {
+  if (!value) return true;
+  let origin;
+  try { origin = new URL(String(value)).origin; } catch { return false; }
+  const allowed = new Set([
+    "https://cinevo.fourtee2.digital",
+    "http://localhost:8080", "http://127.0.0.1:8080",
+    `http://localhost:${PORT}`, `http://127.0.0.1:${PORT}`,
+    ...String(process.env.CINEVO_NODE_ALLOWED_ORIGINS || "")
+      .split(",").map((item) => item.trim()).filter(Boolean),
+  ]);
+  return allowed.has(origin);
+}
+
+function localDashboardAccess(req) {
+  // The physical machine controls pairing secrets and unpaired settings.
+  // Never trust a caller-supplied header to authenticate a dashboard operation.
+  const peer = String(req.socket.remoteAddress || "").replace(/^::ffff:/, "");
+  if (peer !== "::1" && !/^127\./.test(peer)) return false;
+  const origin = req.headers.origin;
+  if (!origin) return true; // CLI / local OS integrations
+  try {
+    const url = new URL(String(origin));
+    return url.protocol === "http:" &&
+      ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) &&
+      Number(url.port || 80) === PORT;
+  } catch {
+    return false;
+  }
+}
+
+const pairFailures = new Map();
+function tooManyPairAttempts(req) {
+  const peer = String(req.socket.remoteAddress || "");
+  const row = pairFailures.get(peer);
+  if (!row || row.until < Date.now()) return false;
+  return row.count >= 8;
+}
+function recordPairFailure(req) {
+  const peer = String(req.socket.remoteAddress || "");
+  const row = pairFailures.get(peer);
+  if (!row || row.until < Date.now()) pairFailures.set(peer, { count: 1, until: Date.now() + CODE_TTL_MS });
+  else row.count += 1;
+}
+
 function publicStatus() {
   return {
     deviceId: state.config.deviceId,
@@ -282,7 +331,16 @@ function contained(root, target) {
 }
 
 function underScannedFolder(filePath) {
-  return (state.config.folders || []).some((f) => contained(f.path, filePath));
+  // A symlink under an approved folder must never escape into unrelated files.
+  let realTarget;
+  try { realTarget = fs.realpathSync(filePath); } catch { return false; }
+  return (state.config.folders || []).some((folder) => {
+    try {
+      return contained(fs.realpathSync(folder.path), realTarget);
+    } catch {
+      return false;
+    }
+  });
 }
 
 function findPlayPath(id, rawPath) {
@@ -321,34 +379,25 @@ function streamFile(req, res, filePath) {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length",
   };
-  if (req.method === "HEAD") {
-    res.writeHead(200, { ...extra, "Content-Length": String(size) });
+  const range = parseByteRange(req.headers.range, size);
+  if (range && range.unsatisfiable) {
+    res.writeHead(416, { ...extra, "Content-Range": `bytes */${size}`, "Content-Length": "0" });
     res.end();
     return;
   }
-  const range = req.headers.range;
-  if (range) {
-    const m = /^bytes=(\d*)-(\d*)$/.exec(range);
-    if (m) {
-      let start = m[1] ? Number(m[1]) : 0;
-      let end = m[2] ? Number(m[2]) : size - 1;
-      if (!Number.isFinite(start) || !Number.isFinite(end) || start >= size || start < 0) {
-        res.writeHead(416, { ...extra, "Content-Range": `bytes */${size}` });
-        res.end();
-        return;
-      }
-      end = Math.min(end, size - 1);
-      res.writeHead(206, {
-        ...extra,
-        "Content-Length": String(end - start + 1),
-        "Content-Range": `bytes ${start}-${end}/${size}`,
-      });
-      fs.createReadStream(filePath, { start, end, highWaterMark: 1024 * 1024 }).pipe(res);
-      return;
-    }
+  const status = range ? 206 : 200;
+  const headers = range
+    ? { ...extra, "Content-Length": String(range.end - range.start + 1), "Content-Range": `bytes ${range.start}-${range.end}/${size}` }
+    : { ...extra, "Content-Length": String(size) };
+  res.writeHead(status, headers);
+  if (req.method === "HEAD") {
+    res.end();
+    return;
   }
-  res.writeHead(200, { ...extra, "Content-Length": String(size) });
-  fs.createReadStream(filePath, { highWaterMark: 1024 * 1024 }).pipe(res);
+  const file = fs.createReadStream(filePath, range ? { start: range.start, end: range.end, highWaterMark: 1024 * 1024 } : { highWaterMark: 1024 * 1024 });
+  file.on("error", (error) => res.destroy(error));
+  res.on("close", () => file.destroy());
+  file.pipe(res);
 }
 
 function brandPng() {
@@ -837,6 +886,15 @@ async function importSections(conn, keys) {
 
 async function handle(req, res) {
   const url = new URL(req.url || "/", `http://${HOST}:${PORT}`);
+  // Reject scripted requests from unrelated websites even when a user has
+  // paired locally. Non-browser clients still need a valid bearer session.
+  if (!trustedBrowserOrigin(req.headers.origin)) {
+    send(res, 403, { error: "This website is not allowed to control CINEVO Node." }, {
+      "Access-Control-Allow-Origin": "null",
+      "Access-Control-Allow-Private-Network": "false",
+    });
+    return;
+  }
   if (req.method === "OPTIONS") {
     send(res, 204, "");
     return;
@@ -847,7 +905,7 @@ async function handle(req, res) {
       ok: true,
       version: VERSION,
       deviceId: state.config.deviceId,
-      loopback: true,
+      loopback: HOST === "127.0.0.1" || HOST === "::1",
       port: PORT,
     });
     return;
@@ -869,17 +927,20 @@ async function handle(req, res) {
   }
 
   if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/dashboard")) {
+    if (!localDashboardAccess(req)) return send(res, 403, { error: "Open this dashboard on the Node computer." });
     send(res, 200, dashboardHtml());
     return;
   }
 
   if (req.method === "POST" && url.pathname === "/v1/code/rotate") {
+    if (!localDashboardAccess(req)) return send(res, 403, { error: "This action is local-only." });
     rotateCode();
     send(res, 302, "", { Location: "/" });
     return;
   }
 
   if (req.method === "POST" && url.pathname === "/v1/pair") {
+    if (tooManyPairAttempts(req)) return send(res, 429, { error: "Too many pairing attempts. Try again later." });
     let body;
     try {
       body = await readBody(req);
@@ -890,9 +951,11 @@ async function handle(req, res) {
     if (Date.now() > state.codeExpires) rotateCode();
     const code = normCode(body.code);
     if (!code || code !== normCode(state.code)) {
+      recordPairFailure(req);
       send(res, 401, { error: "Pairing was not accepted" });
       return;
     }
+    pairFailures.delete(String(req.socket.remoteAddress || ""));
     const token = crypto.randomBytes(24).toString("hex");
     const expires = Date.now() + SESSION_TTL_MS;
     state.sessions.set(token, { expires, createdAt: Date.now() });
@@ -908,7 +971,7 @@ async function handle(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/v1/connections") {
-    const localDash = req.headers["x-cinevo-local"] === "dashboard";
+    const localDash = localDashboardAccess(req);
     if (!localDash && !requireSession(req, res)) return;
     let body;
     try {
@@ -1010,16 +1073,16 @@ async function handle(req, res) {
       name,
       count: files.length,
     };
-    state.config.folders = state.config.folders || [];
+    state.config.folders = (state.config.folders || []).filter((item) => path.resolve(item.path) !== path.resolve(folderPath));
     state.config.folders.push(folder);
-    saveConfig(state.config);
     const library = files.map((f) => titleFromVideo(f));
-    state.config.library = library.map((item) => ({
+    const existing = (state.config.library || []).filter((item) => !contained(folderPath, item.path));
+    state.config.library = [...existing, ...library.map((item) => ({
       id: item.id,
       title: item.title,
       year: item.year,
       path: item.path,
-    }));
+    }))];
     saveConfig(state.config);
     send(res, 200, {
       id: folder.id,

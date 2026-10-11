@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Cast, Check, ChevronLeft, ListPlus, Play, Search, Star, X } from "lucide-react";
 import { filterCatalog, similarTo, type Title } from "@/lib/catalog";
 import { libraryPool, titleById, useCinevo } from "@/lib/cinevo-store";
-import { askCinevo } from "@/lib/ask-cinevo";
+import { askCinevo, getAiConsent, setAiConsentServer } from "@/lib/ask-cinevo";
 import type { PremierePlan } from "@/lib/premiere";
 import { mixForTheme } from "@/lib/house-mix";
 import { Rail, ArtImage } from "./poster";
@@ -373,6 +373,18 @@ export function CoreModal() {
   const [profile, setProfile] = useState<{ username: string; xp: number; streak: number } | null>(null);
   useEffect(() => {
     if (!open) return;
+    let cancelled = false;
+    void getAiConsent()
+      .then((res) => {
+        if (!cancelled) setAiConsent(res.ok && res.enabled);
+      })
+      .catch(() => {
+        if (!cancelled) setAiConsent(false);
+      });
+    return () => { cancelled = true; };
+  }, [open, setAiConsent]);
+  useEffect(() => {
+    if (!open) return;
     void getMyProfile()
       .then((res) => {
         if (res.ok && res.profile) setProfile(res.profile);
@@ -409,6 +421,8 @@ export function CoreModal() {
         setAnswer(res.text.replace(/\*\*/g, ""));
         setPlan(res.plan);
       } else flash(res.error);
+    } catch {
+      flash("The attendant is unavailable. Try again after signing in.");
     } finally {
       setPending(false);
     }
@@ -452,7 +466,18 @@ export function CoreModal() {
             <input
               type="checkbox"
               checked={aiConsent}
-              onChange={(e) => setAiConsent(e.target.checked)}
+              onChange={(e) => {
+                const enabled = e.target.checked;
+                setAiConsent(enabled);
+                void setAiConsentServer({ data: { enabled } })
+                  .then((res) => {
+                    if (!res.ok) setAiConsent(false);
+                  })
+                  .catch(() => {
+                    setAiConsent(false);
+                    flash("Could not save AI consent. Try again.");
+                  });
+              }}
               className="size-5 accent-cine-cyan"
             />
           </label>

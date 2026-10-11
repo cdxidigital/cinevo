@@ -1,20 +1,11 @@
 import { ArrowUpRight, Download } from "lucide-react";
-import { INSTALLERS } from "@/lib/node-client";
 
 export function InstallerCards() {
   return (
-    <div className="app-shelf app-shelf--grid">
-      {INSTALLERS.map((item) => (
-        <a key={item.id} href={item.href} download className="dl-card">
-          <img src="/node-icon.png" alt="" />
-          <p className="dl-card__kicker">{item.label}</p>
-          <strong>{item.arch}</strong>
-          <p>{item.hint}</p>
-          <span className="dl-card__go">
-            <Download size={16} /> Download Server
-          </span>
-        </a>
-      ))}
+    <div role="status" className="tool-card" aria-live="polite">
+      <h3 className="font-ui text-lg font-semibold">Native installers temporarily unavailable</h3>
+      <p>We are replacing older installer signatures after a release-security review. Do not use previously distributed packages until the new signed installers are published.</p>
+      <p>The browser player remains available while the releases are verified.</p>
     </div>
   );
 }
@@ -64,8 +55,10 @@ const PHONE_APPS = [
 
 export function PhoneApps() {
   return (
-    <div className="app-shelf app-shelf--grid">
-      {PHONE_APPS.map((item) => (
+    <div>
+      <p role="status" className="mb-4 text-sm text-cine-muted">Android and Android TV APK downloads are paused while new signing credentials are verified. The web and iOS Home Screen versions remain available.</p>
+      <div className="app-shelf app-shelf--grid">
+      {PHONE_APPS.filter((item) => item.id !== "android" && item.id !== "android-tv").map((item) => (
         <a key={item.id} href={item.href} download={item.download || undefined} className="dl-card">
           <img src="/app-icon.png" alt="" />
           <p className="dl-card__kicker">{item.kicker}</p>
@@ -76,6 +69,7 @@ export function PhoneApps() {
           </span>
         </a>
       ))}
+      </div>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { safeArtPath } from "@/lib/artwork-model";
 import { loadTicket } from "@/lib/playback.server";
+import { assertSafeMediaEgress } from "@/lib/media-egress.server";
 
 export const Route = createFileRoute("/api/art/$ticket")({
   server: {
@@ -13,9 +14,10 @@ export const Route = createFileRoute("/api/art/$ticket")({
         const base = ticket.url.replace(/\/$/, "");
         let upstream: Response;
         try {
+          await assertSafeMediaEgress(`${base}${path}`);
           upstream = await fetch(`${base}${path}`, {
             headers: ticket.headers,
-            redirect: "follow",
+            redirect: "error",
             signal: AbortSignal.timeout(12000),
           });
         } catch {

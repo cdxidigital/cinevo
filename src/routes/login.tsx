@@ -287,16 +287,20 @@ function Login() {
                   />
                 </>
               ) : null}
-              <PasskeyLogin
-                mode={mode}
-                email={email}
-                name={username || email.split("@")[0] || ""}
-                desk={desk}
-                onAuthed={async (token) => {
-                  const kept = await enterHouse(token, username);
-                  if (!kept) setError("The passkey matched, but this browser did not keep the sign-in. Reload and try again.");
-                }}
-              />
+              {mode === "up" ? (
+                <p className="login-hint">Create your account with a password or Google/X first. Once signed in, you can add a passkey in your account settings.</p>
+              ) : (
+                <PasskeyLogin
+                  mode={mode}
+                  email={email}
+                  name={username || email.split("@")[0] || ""}
+                  desk={desk}
+                  onAuthed={async (token) => {
+                    const kept = await enterHouse(token, username);
+                    if (!kept) setError("The passkey matched, but this browser did not keep the sign-in. Reload and try again.");
+                  }}
+                />
+              )}
               {error ? <p className="text-sm text-cine-danger">{error}</p> : null}
               <p className="login-split">or password</p>
               {mode === "in" ? (

@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { once } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,12 +7,26 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
-const PORT = 48185;
+// Each test gets its own port and private config, independent of other tests
+// and independent of a developer's actual paired media server.
+let nextPort = 48185;
 
-function start() {
+function start(t) {
+  const port = nextPort++;
+  const privateConfig = fs.mkdtempSync(path.join(os.tmpdir(), "cinevo-node-test-config-"));
   const child = spawn(process.execPath, [path.join(root, "index.cjs"), "--no-open"], {
-    env: { ...process.env, CINEVO_NODE_PORT: String(PORT) },
+    env: {
+      ...process.env,
+      CINEVO_NODE_PORT: String(port),
+      CINEVO_NODE_HOST: "127.0.0.1",
+      CINEVO_NODE_CONFIG_DIR: privateConfig,
+    },
     stdio: ["ignore", "pipe", "pipe"],
+  });
+  child.testPort = port;
+  t.after(() => {
+    if (child.exitCode === null) child.kill("SIGTERM");
+    fs.rmSync(privateConfig, { recursive: true, force: true });
   });
   return child;
 }
@@ -39,11 +52,10 @@ async function waitReady(child) {
 }
 
 test("loopback health, pair, and 401 without bearer", async (t) => {
-  const child = start();
-  t.after(() => child.kill("SIGTERM"));
+  const child = start(t);
   const codes = await waitReady(child);
   const code = codes.pair;
-  const base = `http://127.0.0.1:${PORT}`;
+  const base = `http://127.0.0.1:${child.testPort}`;
 
   const health = await (await fetch(`${base}/health`)).json();
   assert.equal(health.ok, true);
@@ -138,3 +150,95 @@ test("loopback health, pair, and 401 without bearer", async (t) => {
   assert.match(await page.text(), /Ready to cast/);
 });
 
+
+test("dashboard pairing secrets cannot be read by a foreign website", async (t) => {
+  const child = start(t);
+  await waitReady(child);
+  const base = `http://127.0.0.1:${child.testPort}`;
+  const foreign = await fetch(base + "/dashboard", { headers: { Origin: "https://untrusted.example" } });
+  assert.equal(foreign.status, 403);
+  const local = await fetch(base + "/dashboard", { headers: { Origin: base } });
+  assert.equal(local.status, 200);
+  assert.match(await local.text(), /CINEVO NODE/);
+  const forged = await fetch(base + "/v1/connections", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Cinevo-Local": "dashboard", Origin: "https://untrusted.example" },
+    body: JSON.stringify({ provider: "preview" }),
+  });
+  assert.equal(forged.status, 403);
+});
+
+test("file HTTP ranges handle suffix, reversal and HEAD correctly", async (t) => {
+  const child = start(t);
+  const { pair } = await waitReady(child);
+  const base = `http://127.0.0.1:${child.testPort}`;
+  const joined = await fetch(base + "/v1/pair", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: pair }),
+  });
+  assert.equal(joined.status, 200);
+  const { token } = await joined.json();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cinevo-range-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const f = path.join(dir, "Range.Test.mp4");
+  fs.writeFileSync(f, "0123456789");
+  const added = await fetch(base + "/v1/folders", {
+    method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ path: dir }),
+  });
+  assert.equal(added.status, 200);
+  const stream = base + "/v1/play?token=" + encodeURIComponent(token) + "&path=" + encodeURIComponent(f);
+  const suffix = await fetch(stream, { headers: { Range: "bytes=-3" } });
+  assert.equal(suffix.status, 206);
+  assert.equal(suffix.headers.get("content-range"), "bytes 7-9/10");
+  assert.equal(await suffix.text(), "789");
+  const reversed = await fetch(stream, { headers: { Range: "bytes=8-4" } });
+  assert.equal(reversed.status, 416);
+  assert.equal(reversed.headers.get("content-range"), "bytes */10");
+  const head = await fetch(stream, { method: "HEAD", headers: { Range: "bytes=3-5" } });
+  assert.equal(head.status, 206);
+  assert.equal(head.headers.get("content-length"), "3");
+  assert.equal(head.headers.get("content-range"), "bytes 3-5/10");
+});
+
+test("a symlink in an indexed folder cannot escape the approved media root", async (t) => {
+  const child = start(t);
+  const { pair } = await waitReady(child);
+  const base = `http://127.0.0.1:${child.testPort}`;
+  const joined = await fetch(base + "/v1/pair", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: pair }),
+  });
+  assert.equal(joined.status, 200);
+  const { token } = await joined.json();
+  const privateDir = fs.mkdtempSync(path.join(os.tmpdir(), "cinevo-not-scanned-"));
+  const mediaDir = fs.mkdtempSync(path.join(os.tmpdir(), "cinevo-indexed-"));
+  t.after(() => { fs.rmSync(privateDir, { recursive: true, force: true }); fs.rmSync(mediaDir, { recursive: true, force: true }); });
+  const target = path.join(privateDir, "private.mp4");
+  fs.writeFileSync(target, "NOT PART OF THIS LIBRARY");
+  const link = path.join(mediaDir, "linked.mp4");
+  fs.symlinkSync(target, link);
+  const allowed = await fetch(base + "/v1/folders", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ path: mediaDir }),
+  });
+  assert.equal(allowed.status, 200);
+  const leaked = await fetch(base + "/v1/play?token=" + encodeURIComponent(token) + "&path=" + encodeURIComponent(link));
+  assert.equal(leaked.status, 404);
+});
+
+test("untrusted sites cannot pair even with an otherwise valid code", async (t) => {
+  const child = start(t);
+  const { pair } = await waitReady(child);
+  const base = `http://127.0.0.1:${child.testPort}`;
+  const foreign = await fetch(base + "/v1/pair", {
+    method: "POST",
+    headers: { Origin: "https://untrusted.example", "Content-Type": "application/json" },
+    body: JSON.stringify({ code: pair }),
+  });
+  assert.equal(foreign.status, 403);
+  const legit = await fetch(base + "/v1/pair", {
+    method: "POST",
+    headers: { Origin: "https://cinevo.fourtee2.digital", "Content-Type": "application/json" },
+    body: JSON.stringify({ code: pair }),
+  });
+  assert.equal(legit.status, 200);
+});

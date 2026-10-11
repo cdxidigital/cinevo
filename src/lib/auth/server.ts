@@ -217,9 +217,9 @@ export const auth = betterAuth({
         ...GROK_PROVIDERS.map((p) => p.providerId),
         GATE_PROVIDER_ID,
       ],
-      // X's synthetic email is never "verified", so don't gate linking on the
-      // local user's email-verified state.
-      requireLocalEmailVerified: false,
+      // Never auto-link OAuth to an unverified local account. An attacker can
+      // otherwise preclaim somebody else's email via a password account.
+      requireLocalEmailVerified: true,
     },
   },
 

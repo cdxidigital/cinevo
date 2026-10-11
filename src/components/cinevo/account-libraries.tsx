@@ -45,9 +45,21 @@ export function AccountLibraries() {
   const ready = useRef("");
 
   useEffect(() => {
-    if (!hydrated || isPending || !user || user.isDevFallback) return;
+    if (!hydrated || isPending) return;
+    if (!user || user.isDevFallback) {
+      ready.current = "";
+      if (!user && useCinevo.getState().libraryOwner) useCinevo.getState().clearLocalData();
+      return;
+    }
     let cancel = false;
     ready.current = "";
+    // Clear the previous account's credentials and titles BEFORE loading the
+    // new owner's library. Never display or save A's library while B is loading.
+    const previous = useCinevo.getState();
+    if (previous.libraryOwner !== user.id &&
+      (previous.libraryOwner || previous.plexToken || previous.nodeToken || previous.sources.length)) {
+      previous.clearLocalData();
+    }
     void loadAccountLibrary()
       .then((res) => {
         if (cancel || !res.ok) return;
@@ -87,12 +99,13 @@ export function AccountLibraries() {
         ready.current = user.id;
       })
       .catch(() => {
-        if (!cancel) ready.current = user.id;
+        // Do not mark a failed account load ready or persist stale state.
+        if (!cancel) useCinevo.getState().flash("Account library could not be loaded. Reload to retry.");
       });
     return () => {
       cancel = true;
     };
-  }, [hydrated, isPending, user]);
+  }, [hydrated, isPending, user?.id, user?.isDevFallback]);
 
   useEffect(() => {
     if (!user || user.isDevFallback || ready.current !== user.id) return;

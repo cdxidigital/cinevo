@@ -1,4 +1,5 @@
 import { getSql } from "@/lib/db";
+import { mediaEgressError } from "@/lib/media-egress.server";
 import { jellyfinStreamTarget, nodeStreamTarget, plexStreamTarget, serverAddressError, type PlaybackFit } from "@/lib/playback-urls";
 
 function ticketId() {
@@ -21,7 +22,7 @@ export async function createTicket(input: {
   const key = input.key.trim();
   const token = input.token.trim();
   if (!uri || !key || !token) return { ok: false as const, error: "Missing playback details." };
-  const blocked = serverAddressError(uri);
+  const blocked = serverAddressError(uri) || (await mediaEgressError(uri));
   if (blocked) return { ok: false as const, error: blocked };
   const clientId = input.clientId || "cinevo-web";
   const fit = input.fit === "compatible" ? "compatible" : "original";

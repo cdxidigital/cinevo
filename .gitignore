@@ -9,3 +9,12 @@ node_modules/
 nodes/cinevo-node/dist/
 artifacts/
 screenshots/
+
+# Signing keys and certificates must never be committed.
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+nodes/cinevo-node/tools/certs/

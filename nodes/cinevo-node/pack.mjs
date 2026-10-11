@@ -171,46 +171,21 @@ function ensureJsign() {
 }
 
 function signWindows(exePath) {
-  const certDir = path.join(tools, "certs");
-  fs.mkdirSync(certDir, { recursive: true });
-  const key = path.join(certDir, "cinevo-node.key");
-  const crt = path.join(certDir, "cinevo-node.crt");
-  const p12 = path.join(certDir, "cinevo-node.p12");
-  if (!fs.existsSync(p12) || !fs.existsSync(crt) || !fs.existsSync(key)) {
-    execFileSync("openssl", [
-      "req",
-      "-newkey",
-      "rsa:4096",
-      "-nodes",
-      "-keyout",
-      key,
-      "-x509",
-      "-days",
-      "1825",
-      "-sha256",
-      "-out",
-      crt,
-      "-subj",
-      "/CN=CINEVO/O=CDXI/OU=Fourtee2 Digital/C=AU",
-      "-addext",
-      "extendedKeyUsage=codeSigning",
-      "-addext",
-      "keyUsage=digitalSignature",
-    ], { stdio: "inherit" });
-    execFileSync("openssl", [
-      "pkcs12",
-      "-export",
-      "-out",
-      p12,
-      "-inkey",
-      key,
-      "-in",
-      crt,
-      "-name",
-      "cinevo",
-      "-passout",
-      "pass:cinevo-node",
-    ], { stdio: "inherit" });
+  // Release signing material must be provisioned outside the public source tree.
+  // The historical bundled self-signed private key was exposed and is revoked
+  // for release purposes. Never regenerate a fixed-password key in tools/certs.
+  const p12 = process.env.CINEVO_WINDOWS_SIGNING_P12?.trim();
+  const password = process.env.CINEVO_WINDOWS_SIGNING_PASSWORD;
+  if (!p12 || !password || !fs.existsSync(p12)) {
+    if (process.env.CINEVO_ALLOW_UNSIGNED_BUILD === "1") {
+      console.warn("CINEVO Node: UNSIGNED development build. Do not distribute.");
+      return false;
+    }
+    throw new Error(
+      "Windows release signing requires CINEVO_WINDOWS_SIGNING_P12 and " +
+      "CINEVO_WINDOWS_SIGNING_PASSWORD (stored outside this repository). " +
+      "For local test packages only, set CINEVO_ALLOW_UNSIGNED_BUILD=1.",
+    );
   }
   const jar = ensureJsign();
   const args = [
@@ -219,9 +194,9 @@ function signWindows(exePath) {
     "--keystore",
     p12,
     "--alias",
-    "cinevo",
+    process.env.CINEVO_WINDOWS_SIGNING_ALIAS?.trim() || "cinevo",
     "--storepass",
-    "cinevo-node",
+    password,
     "--storetype",
     "PKCS12",
     "--alg",
@@ -234,16 +209,15 @@ function signWindows(exePath) {
   ];
   const signed = spawnSync("java", args, { stdio: "inherit" });
   if (signed.status !== 0) {
-    console.warn("jsign without timestamp failed; retrying with DigiCert TSA");
-    execFileSync("java", [...args.slice(0, -1), "--tsaurl", "http://timestamp.digicert.com", exePath], {
+    console.warn("Initial code signing failed; retrying with timestamp server");
+    execFileSync("java", [...args.slice(0, -1), "--tsaurl", "https://timestamp.digicert.com", exePath], {
       stdio: "inherit",
     });
   }
   const pe = fs.readFileSync(exePath);
-  if (!pe.includes(Buffer.from("CINEVO Node")) && pe.length < 1000) {
-    throw new Error("signed binary looks empty");
-  }
+  if (pe.length < 1000) throw new Error("signed binary looks empty");
   console.log("Authenticode-signed", path.basename(exePath));
+  return true;
 }
 
 const WIN_PS1 = `# CINEVO Node installer for Windows
@@ -528,7 +502,7 @@ verifyBinary(macArm, "macho");
 verifyBinary(linuxX64, "elf");
 
 brandWindowsExe(winExe);
-signWindows(winExe);
+const windowsSigned = signWindows(winExe);
 verifyBinary(winExe, "pe");
 
 const winDir = path.join(dist, "win-x64");
@@ -562,7 +536,7 @@ const manifest = {
   bind: "127.0.0.1",
   icon: "/node-icon.png",
   signed: {
-    windows: "authenticode:CINEVO Node",
+    windows: windowsSigned ? "Authenticode: CINEVO Node" : "unsigned development build (do not distribute)",
     mac: "ad-hoc Mach-O signature via ldid + AppIcon.icns",
     linux: "ELF x64 for Linux and NAS",
   },

@@ -23,13 +23,16 @@ import zipfile
 zipfile.ZipFile("$WORK/base.apk", "a").write("$WORK/classes.dex", "classes.dex")
 PY
 "$BT/zipalign" -p -f 4 "$WORK/base.apk" "$WORK/aligned.apk"
-KEYSTORE="$ROOT/cinevo-tv.jks"
+: "${CINEVO_TV_KEYSTORE:?Set CINEVO_TV_KEYSTORE to a keystore outside this repository}"
+: "${CINEVO_TV_KEYSTORE_PASSWORD:?Set CINEVO_TV_KEYSTORE_PASSWORD}"
+: "${CINEVO_TV_KEY_PASSWORD:?Set CINEVO_TV_KEY_PASSWORD}"
+KEYSTORE="$CINEVO_TV_KEYSTORE"
 if [[ ! -f "$KEYSTORE" ]]; then
-  keytool -genkeypair -keystore "$KEYSTORE" -storepass cinevo-tv -keypass cinevo-tv \
-    -alias cinevo -keyalg RSA -keysize 2048 -validity 3650 \
-    -dname "CN=CINEVO TV, O=CINEVO, C=AU"
+  echo "TV signing keystore was not found." >&2
+  exit 1
 fi
-"$BT/apksigner" sign --ks "$KEYSTORE" --ks-pass pass:cinevo-tv --key-pass pass:cinevo-tv \
+"$BT/apksigner" sign --ks "$KEYSTORE" --ks-key-alias "${CINEVO_TV_KEY_ALIAS:-cinevo}" \
+  --ks-pass env:CINEVO_TV_KEYSTORE_PASSWORD --key-pass env:CINEVO_TV_KEY_PASSWORD \
   --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
   --out "$OUT" "$WORK/aligned.apk"
 "$BT/apksigner" verify --verbose "$OUT"

@@ -103,12 +103,20 @@ const LOCAL_DEV_ORIGINS: string[] = [
   "http://127.0.0.1:8080",
   "http://[::1]:8080",
 ];
+// The public house. Vercel also serves a *.vercel.app host; the custom domain
+// must be trusted or email sign-up returns "Invalid origin".
+const PRODUCTION_HOSTS: string[] = ["cinevo.fourtee2.digital", "*.fourtee2.digital", "*.vercel.app"];
+const PRODUCTION_ORIGINS: string[] = [
+  "https://cinevo.fourtee2.digital",
+  "https://*.fourtee2.digital",
+  "https://*.vercel.app",
+];
 const baseURL = explicitBaseURL ?? {
   // Include loopback hosts so dynamic baseURL resolves for local email/password
   // (not only the preview wildcard).
   allowedHosts: [
     ...previewAllowedHosts,
-    "*.vercel.app",
+    ...PRODUCTION_HOSTS,
     "localhost",
     "localhost:8080",
     "127.0.0.1",
@@ -124,15 +132,17 @@ const baseURL = explicitBaseURL ?? {
 
 // Origins Better Auth accepts on credentialed POSTs (sign-up/sign-in, etc.).
 // Missing entries here surface as FORBIDDEN "Invalid origin".
-const trustedOrigins: string[] = explicitBaseURL
-  ? [explicitBaseURL, ...LOCAL_DEV_ORIGINS]
-  : [
-      // Host wildcards (matched against Origin's host)
-      ...previewAllowedHosts,
-      // Full-origin wildcards (matched against Origin)
-      ...previewAllowedHosts.flatMap((host) => [`https://${host}`, `http://${host}`]),
-      ...LOCAL_DEV_ORIGINS,
-    ];
+const trustedOrigins: string[] = [
+  ...(explicitBaseURL ? [explicitBaseURL] : []),
+  ...(!explicitBaseURL
+    ? [
+        ...previewAllowedHosts,
+        ...previewAllowedHosts.flatMap((host) => [`https://${host}`, `http://${host}`]),
+      ]
+    : []),
+  ...PRODUCTION_ORIGINS,
+  ...LOCAL_DEV_ORIGINS,
+];
 
 const databaseUrl = env("DATABASE_URL");
 

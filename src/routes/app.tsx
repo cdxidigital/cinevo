@@ -3,11 +3,6 @@ import { useEffect, useRef } from "react";
 import { Shell } from "@/components/cinevo/shell";
 import { RoomSwitch } from "@/components/cinevo/rooms";
 import {
-  CoreModal,
-  Detail,
-  NoticesOverlay,
-  SearchOverlay,
-  SettingsModal,
   Toast,
 } from "@/components/cinevo/overlays";
 import { Player } from "@/components/cinevo/player";
@@ -106,11 +101,6 @@ function Cinema() {
     <Shell
       overlays={
         <>
-          <Detail />
-          <SearchOverlay />
-          <SettingsModal />
-          <CoreModal />
-          <NoticesOverlay />
           <Player />
           <CastSheet />
           <Toast />

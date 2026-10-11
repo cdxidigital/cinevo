@@ -17,12 +17,13 @@ import { useLibrary } from "@/lib/use-library";
 import { findFolder, folderOf, mapFolderNetwork, titlesInFolder, type FolderBranch } from "@/lib/folder-map";
 import { isGenericArt } from "@/lib/library";
 import { episodeLabel, episodeMark, onDeck, organizeLibrary, sortShows, type PlexShow } from "@/lib/plex-shelf";
-import { HouseCard } from "./onboarding";
+import { HouseCard, Onboarding } from "./onboarding";
 import { openCast } from "./cast-sheet";
 import { Rail, ArtImage, CoverImg, LibraryBoard, SeenBar } from "./poster";
 import { AddLibrary } from "./add-library";
 import { ToolsRoom } from "./tools-room";
 import { BrandKicker } from "./logo";
+import { CoreModal, Detail, NoticesOverlay, SearchOverlay, SettingsModal } from "./overlays";
 
 const SOURCES: [SourceFilter, string][] = [
   ["all", "All"],
@@ -899,6 +900,28 @@ export function SidebarRoom() {
 }
 
 export function RoomSwitch({ room }: { room: Room }) {
+  const page = useCinevo((s) =>
+    s.selectedId
+      ? "title"
+      : s.searchOpen
+        ? "search"
+        : s.settingsOpen
+          ? "settings"
+          : s.noticesOpen
+            ? "notices"
+            : s.coreOpen
+              ? "core"
+              : "",
+  );
+  const onboarded = useCinevo((s) => s.house.onboarded);
+  const hydrated = useCinevo((s) => s.hydrated);
+  const playingId = useCinevo((s) => s.playingId);
+  if (page === "title") return <Detail />;
+  if (page === "search") return <SearchOverlay />;
+  if (page === "settings") return <SettingsModal />;
+  if (page === "notices") return <NoticesOverlay />;
+  if (page === "core") return <CoreModal />;
+  if (hydrated && !onboarded && !playingId) return <Onboarding />;
   switch (room) {
     case "browse":
       return <BrowseRoom />;

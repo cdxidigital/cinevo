@@ -187,13 +187,11 @@ export function SearchOverlay() {
   };
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-cine-bg/80 p-4 pt-16"
-      onMouseDown={() => setSearchOpen(false)}
-    >
-      <section
-        className="glass-strong w-full max-w-2xl rounded-xl p-4"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
+    <div className="house-page house-page--flow">
+      <button type="button" className="house-back" onClick={() => setSearchOpen(false)}>
+        <ChevronLeft size={16} /> Back
+      </button>
+      <section aria-label="Search">
         <div className="flex items-center gap-3 rounded-lg border border-cine-border bg-cine-well px-3">
           <Search size={16} className="text-cine-cyan" />
           <input
@@ -271,11 +269,11 @@ export function SettingsModal() {
     { key: "focusMode", label: "Focus player", hint: "Quieter playback chrome" },
   ];
   return (
-    <div className="fixed inset-0 z-40 overflow-y-auto bg-cine-bg/80 p-4" onMouseDown={() => setSettingsOpen(false)}>
-      <section
-        className="glass-strong mx-auto my-6 w-full max-w-lg rounded-xl p-5"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
+    <div className="house-page house-page--flow">
+      <button type="button" className="house-back" onClick={() => setSettingsOpen(false)}>
+        <ChevronLeft size={16} /> Back
+      </button>
+      <section className="max-w-lg" aria-label="Settings">
         <header className="mb-4 flex items-start justify-between">
           <div>
             <p className="font-ui text-xs font-semibold tracking-[0.12em] text-cine-cyan">HOUSE</p>
@@ -432,8 +430,11 @@ export function CoreModal() {
   if (!open) return null;
   if (tab === "ai") {
     return (
-      <div className="ask-scrim" onMouseDown={() => setCoreOpen(false)}>
-        <section className="ask-panel" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Ask CINEVO">
+      <div className="house-page house-page--flow">
+        <button type="button" className="house-back" onClick={() => setCoreOpen(false)}>
+          <ChevronLeft size={16} /> Back
+        </button>
+        <section className="max-w-xl" aria-label="Ask CINEVO">
           <header className="mb-4 flex items-start justify-between gap-3">
             <div>
               <p className="font-ui text-xs font-semibold tracking-[0.14em] text-cine-cyan">LA PREMIÈRE</p>
@@ -511,11 +512,11 @@ export function CoreModal() {
     (aiConsent ? 1 : 0);
 
   return (
-    <div className="fixed inset-0 z-40 overflow-y-auto bg-cine-bg/80 p-4" onMouseDown={() => setCoreOpen(false)}>
-      <section
-        className="glass-strong mx-auto my-8 max-w-3xl rounded-xl p-5"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
+    <div className="house-page house-page--flow">
+      <button type="button" className="house-back" onClick={() => setCoreOpen(false)}>
+        <ChevronLeft size={16} /> Back
+      </button>
+      <section className="max-w-3xl" aria-label="Core">
         <header className="mb-4 flex items-start justify-between">
           <div>
             <p className="font-ui text-xs font-semibold tracking-[0.12em] text-cine-cyan">CINEVO CORE</p>
@@ -627,14 +628,11 @@ export function NoticesOverlay() {
   const setRoom = useCinevo((s) => s.setRoom);
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-40 overflow-y-auto bg-cine-bg/80 p-4" onMouseDown={() => setNoticesOpen(false)}>
-      <section
-        className="glass-strong mx-auto mt-16 max-w-lg rounded-xl p-5"
-        onMouseDown={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Notices"
-      >
+    <div className="house-page house-page--flow">
+      <button type="button" className="house-back" onClick={() => setNoticesOpen(false)}>
+        <ChevronLeft size={16} /> Back
+      </button>
+      <section className="max-w-lg" aria-label="Notices">
         <header className="mb-4 flex items-start justify-between">
           <div>
             <p className="font-ui text-xs font-semibold tracking-[0.12em] text-cine-cyan">HOUSE NOTES</p>

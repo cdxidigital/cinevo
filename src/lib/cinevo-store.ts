@@ -410,7 +410,8 @@ export const useCinevo = create<CinevoState>()(
       patches: {},
       house: EMPTY_HOUSE,
       setRoom: (room) => set({ room, selectedId: null }),
-      openTitle: (id) => set({ selectedId: id }),
+      openTitle: (id) =>
+        set({ selectedId: id, searchOpen: false, settingsOpen: false, coreOpen: false, noticesOpen: false }),
       closeTitle: () => set({ selectedId: null }),
       play: (id) => {
         const p = get().progress[id] ?? 0;
@@ -489,12 +490,39 @@ export const useCinevo = create<CinevoState>()(
         if (pick) get().play(pick.id);
         else get().flash("Add a library first");
       },
-      setSearchOpen: (searchOpen) => set({ searchOpen }),
+      setSearchOpen: (searchOpen) =>
+        set(
+          searchOpen
+            ? { searchOpen: true, settingsOpen: false, coreOpen: false, noticesOpen: false, selectedId: null }
+            : { searchOpen: false },
+        ),
       setLibraryQuery: (libraryQuery) => set({ libraryQuery }),
-      setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
-      setCoreOpen: (coreOpen, tab) => set({ coreOpen, coreTab: tab ?? get().coreTab }),
+      setSettingsOpen: (settingsOpen) =>
+        set(
+          settingsOpen
+            ? { settingsOpen: true, searchOpen: false, coreOpen: false, noticesOpen: false, selectedId: null }
+            : { settingsOpen: false },
+        ),
+      setCoreOpen: (coreOpen, tab) =>
+        set(
+          coreOpen
+            ? {
+                coreOpen: true,
+                coreTab: tab ?? get().coreTab,
+                searchOpen: false,
+                settingsOpen: false,
+                noticesOpen: false,
+                selectedId: null,
+              }
+            : { coreOpen: false, ...(tab ? { coreTab: tab } : {}) },
+        ),
       setCoreTab: (coreTab) => set({ coreTab }),
-      setNoticesOpen: (noticesOpen) => set({ noticesOpen }),
+      setNoticesOpen: (noticesOpen) =>
+        set(
+          noticesOpen
+            ? { noticesOpen: true, searchOpen: false, settingsOpen: false, coreOpen: false, selectedId: null }
+            : { noticesOpen: false },
+        ),
       flash: (toast) => {
         set({ toast });
         window.setTimeout(() => {

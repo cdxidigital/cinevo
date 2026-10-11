@@ -1745,6 +1745,15 @@ html[data-theme="paper"] .house-ambient {
 .house-page--flow {
   padding-bottom: 2rem;
 }
+.gate-stage {
+  display: grid;
+  min-height: 60vh;
+  place-items: center;
+  padding: 2rem 1rem 3rem;
+}
+.cinevo-house:has(.gate-stage) .house-main {
+  display: none;
+}
 .library-toolbar {
   display: flex;
   flex: 0 0 auto;
@@ -2071,11 +2080,9 @@ html[data-theme="paper"] .house-ambient {
 }
 
 .house-detail {
-  position: fixed;
-  inset: 0;
-  z-index: 35;
+  position: relative;
   isolation: isolate;
-  overflow-y: auto;
+  min-height: 100%;
   background: var(--color-cine-bg);
 }
 
@@ -2104,7 +2111,7 @@ html[data-theme="paper"] .house-ambient {
   position: relative;
   width: min(1320px, 100%);
   margin: 0 auto;
-  padding: 6.5rem max(5vw, 1.25rem) 5rem;
+  padding: 1.25rem max(5vw, 1.25rem) 5rem;
 }
 
 .house-back {
@@ -2237,7 +2244,7 @@ html[data-theme="paper"] .house-ambient {
     padding: 0.95rem;
   }
   .house-detail__inner {
-    padding: 5.5rem 1.2rem 4rem;
+    padding: 1rem 1.2rem 4rem;
   }
   .house-back {
     margin-bottom: 2.5rem;

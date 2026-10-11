@@ -8,7 +8,6 @@ import { isLoopbackUrl } from "@/lib/playback-urls";
 import { cn } from "@/lib/utils";
 import { useLibrary } from "@/lib/use-library";
 import { coverFor } from "@/lib/library";
-import { Onboarding } from "./onboarding";
 import { Logo } from "./logo";
 import { ArtworkSync } from "./artwork-sync";
 import { AccountLibraries } from "./account-libraries";
@@ -131,14 +130,10 @@ export function Shell({
   const setCoreOpen = useCinevo((s) => s.setCoreOpen);
   const coreTab = useCinevo((s) => s.coreTab);
   const setNoticesOpen = useCinevo((s) => s.setNoticesOpen);
+  const coreOpen = useCinevo((s) => s.coreOpen);
   const unread = useCinevo((s) => s.notices.filter((n) => !n.readAt).length);
   const night = useCinevo((s) => s.prefs.nightMode);
   const zen = useCinevo((s) => s.prefs.zenMode);
-  const searchOpen = useCinevo((s) => s.searchOpen);
-  const settingsOpen = useCinevo((s) => s.settingsOpen);
-  const coreOpen = useCinevo((s) => s.coreOpen);
-  const noticesOpen = useCinevo((s) => s.noticesOpen);
-  const selectedId = useCinevo((s) => s.selectedId);
   const playingId = useCinevo((s) => s.playingId);
   const party = useCinevo((s) => s.party);
   const endParty = useCinevo((s) => s.endParty);
@@ -170,7 +165,7 @@ export function Shell({
     };
   }, [drawer]);
 
-  const overlayOpen = Boolean(searchOpen || settingsOpen || coreOpen || noticesOpen || selectedId);
+  const overlayOpen = Boolean(playingId);
   const playing = Boolean(playingId);
   useEffect(() => {
     if (!overlayOpen) return;
@@ -212,7 +207,12 @@ export function Shell({
   const go = (id: Room) => {
     setRoom(id);
     setDrawer(false);
-    if (useCinevo.getState().coreOpen) setCoreOpen(false);
+    const state = useCinevo.getState();
+    if (state.coreOpen) setCoreOpen(false);
+    if (state.searchOpen) setSearchOpen(false);
+    if (state.settingsOpen) setSettingsOpen(false);
+    if (state.noticesOpen) setNoticesOpen(false);
+    if (state.selectedId) state.closeTitle();
     const room = paramFromRoom(id);
     void navigate({
       to: "/app",
@@ -465,7 +465,6 @@ export function Shell({
       <main key={room} className={cn("house-main", room !== "stage" && "house-main--page")}>{children}</main>
       <ArtworkSync />
       <AccountLibraries />
-      <Onboarding />
       {overlays}
       <UsernameGate />
     </div>

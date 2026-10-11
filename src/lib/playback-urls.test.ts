@@ -98,3 +98,12 @@ test("cloud media URL guard refuses internal, obscure IP and credential-bearing 
   }
   assert.equal(serverAddressError("https://plex.example:32400"), null);
 });
+
+test("simultaneous streams use unique upstream playback sessions", () => {
+  const first = new URL(plexStreamTarget("https://plex.example:32400", "plex-9", "tok", "client-1").url);
+  const second = new URL(plexStreamTarget("https://plex.example:32400", "plex-9", "tok", "client-1").url);
+  assert.notEqual(first.searchParams.get("session"), second.searchParams.get("session"));
+  const jellyFirst = new URL(jellyfinStreamTarget("https://jf.example", "jellyfin-9", "tok", "client-1").url);
+  const jellySecond = new URL(jellyfinStreamTarget("https://jf.example", "jellyfin-9", "tok", "client-1").url);
+  assert.notEqual(jellyFirst.searchParams.get("PlaySessionId"), jellySecond.searchParams.get("PlaySessionId"));
+});

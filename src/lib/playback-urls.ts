@@ -71,7 +71,7 @@ export function plexStreamTarget(
   const client = clientId || "cinevo-web";
   const compatible = fit === "compatible";
   const base = uri.replace(/\/$/, "");
-  const session = `c${Date.now().toString(36)}${key}`.replace(/[^a-z0-9]/gi, "").slice(0, 40);
+  const session = `c${crypto.randomUUID().replace(/-/g, "")}`;
   const profile =
     "add-transcode-target(type=videoProfile&context=streaming&protocol=http&container=mp4&videoCodec=h264&audioCodec=aac&subtitleCodec=)";
   const params = new URLSearchParams({
@@ -136,7 +136,7 @@ export function jellyfinStreamTarget(
   const id = itemId.replace(/^jellyfin-/, "").replace(/^jf-/, "");
   const client = clientId || "cinevo-web";
   const compatible = fit === "compatible";
-  const session = `c${Date.now().toString(36)}`.replace(/[^a-z0-9]/gi, "").slice(0, 24);
+  const session = `c${crypto.randomUUID().replace(/-/g, "")}`;
   const params = new URLSearchParams({
     static: compatible ? "false" : "true",
     mediaSourceId: id,

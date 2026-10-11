@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { convertSegmentUrl, rewriteConvertPlaylist } from "@/lib/convert";
 import { loadTicket } from "@/lib/playback.server";
+import { assertSafeMediaEgress } from "@/lib/media-egress.server";
 
 function isLiveTranscode(url: string) {
   return url.includes("/transcode/") || /[?&]static=false/i.test(url);
@@ -38,6 +39,7 @@ function rewriteLoopback(next: string, origin: string) {
 async function fetchMedia(url: string, headers: Headers, method: "GET" | "HEAD") {
   let current = url;
   for (let hop = 0; hop < 4; hop += 1) {
+    await assertSafeMediaEgress(current);
     const upstream = await fetch(current, { method, headers, redirect: "manual" });
     if (upstream.status < 300 || upstream.status >= 400) return upstream;
     const location = upstream.headers.get("location");

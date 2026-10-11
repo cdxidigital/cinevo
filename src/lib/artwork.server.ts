@@ -2,6 +2,7 @@ import { getSql } from "@/lib/db";
 import { factsFromJellyfin, factsFromPlex, type MediaFacts } from "@/lib/artwork-model";
 import { parsePlexMetadata } from "@/lib/plex";
 import { serverAddressError } from "@/lib/playback-urls";
+import { mediaEgressError } from "@/lib/media-egress.server";
 
 function ticketId() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID().replace(/-/g, "");
@@ -29,7 +30,7 @@ function jellyfinHeader(clientId: string, token: string) {
 
 export async function createArtTicket(input: { userId: string; provider: "plex" | "jellyfin"; uri: string; token: string; clientId?: string }) {
   const uri = input.uri.trim().replace(/\/$/, "");
-  const blocked = serverAddressError(uri);
+  const blocked = serverAddressError(uri) || (await mediaEgressError(uri));
   if (blocked) return { ok: false as const, error: blocked };
   if (!input.token.trim()) return { ok: false as const, error: "Missing library token." };
   const headers = input.provider === "plex" ? plexHeaders(input.clientId || "", input.token.trim()) : jellyfinHeader(input.clientId || "", input.token.trim());
@@ -113,7 +114,7 @@ export async function refreshArtwork(input: {
   ticket?: string;
 }) {
   const uri = input.uri.trim().replace(/\/$/, "");
-  const blocked = serverAddressError(uri);
+  const blocked = serverAddressError(uri) || (await mediaEgressError(uri));
   if (blocked) return { ok: false as const, error: blocked };
   let ticketId = input.ticket?.trim() || "";
   if (ticketId) {

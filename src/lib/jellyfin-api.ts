@@ -36,6 +36,8 @@ function authHeader(deviceId: string, token?: string) {
 
 async function jfFetch(url: string, headers: Record<string, string>, init: RequestInit = {}, ms = 10000) {
   if (serverAddressError(url)) throw new Error("That Jellyfin server address is not allowed.");
+  const { assertSafeMediaEgress } = await import("./media-egress.server");
+  await assertSafeMediaEgress(url);
   const res = await fetch(url, {
     redirect: "error",
     ...init,

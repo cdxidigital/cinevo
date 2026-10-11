@@ -25,6 +25,8 @@ function plexHeaders(clientId: string, token?: string) {
 
 async function plexJson(url: string, headers: Record<string, string>, ms = 8000, init: RequestInit = {}): Promise<unknown> {
   if (serverAddressError(url)) throw new Error("That Plex server address is not allowed.");
+  const { assertSafeMediaEgress } = await import("./media-egress.server");
+  await assertSafeMediaEgress(url);
   const res = await fetch(url, {
     redirect: "error",
     ...init,

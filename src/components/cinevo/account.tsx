@@ -288,7 +288,7 @@ export function UsernameGate() {
   };
 
   return (
-    <div className="gate-stage fixed inset-0 z-[70] bg-cine-bg/80 p-4">
+    <div className="gate-stage">
       <form
         className="glass-strong w-full max-w-md rounded-2xl p-6"
         onSubmit={(e) => {

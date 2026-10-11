@@ -32,8 +32,8 @@ export function Onboarding() {
   const card = STEPS[step];
   const last = step === STEPS.length - 1;
   return (
-    <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/55 p-4 sm:items-center">
-      <section className="glass-strong w-full max-w-lg rounded-2xl p-6" role="dialog" aria-modal="true" aria-label="Welcome to CINEVO">
+    <div className="house-page house-page--flow">
+      <section className="max-w-lg" aria-label="Welcome to CINEVO">
         <p className="house-kicker">{card.kicker}</p>
         <h2 className="mt-2 font-ui text-3xl font-semibold tracking-tight">{card.title}</h2>
         <p className="mt-3 text-cine-muted">{card.body}</p>

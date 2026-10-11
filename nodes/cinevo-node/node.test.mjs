@@ -138,3 +138,53 @@ test("loopback health, pair, and 401 without bearer", async (t) => {
   assert.match(await page.text(), /Ready to cast/);
 });
 
+
+test("dashboard pairing secrets cannot be read by a foreign website", async (t) => {
+  const child = start();
+  t.after(() => child.kill("SIGTERM"));
+  await waitReady(child);
+  const base = `http://127.0.0.1:${PORT}`;
+  const foreign = await fetch(base + "/dashboard", { headers: { Origin: "https://untrusted.example" } });
+  assert.equal(foreign.status, 403);
+  const local = await fetch(base + "/dashboard", { headers: { Origin: base } });
+  assert.equal(local.status, 200);
+  assert.match(await local.text(), /CINEVO NODE/);
+  const forged = await fetch(base + "/v1/connections", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Cinevo-Local": "dashboard", Origin: "https://untrusted.example" },
+    body: JSON.stringify({ provider: "preview" }),
+  });
+  assert.equal(forged.status, 401);
+});
+
+test("file HTTP ranges handle suffix, reversal and HEAD correctly", async (t) => {
+  const child = start();
+  t.after(() => child.kill("SIGTERM"));
+  const { pair } = await waitReady(child);
+  const base = `http://127.0.0.1:${PORT}`;
+  const joined = await fetch(base + "/v1/pair", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: pair }),
+  });
+  assert.equal(joined.status, 200);
+  const { token } = await joined.json();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cinevo-range-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const f = path.join(dir, "Range.Test.mp4");
+  fs.writeFileSync(f, "0123456789");
+  const added = await fetch(base + "/v1/folders", {
+    method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ path: dir }),
+  });
+  assert.equal(added.status, 200);
+  const stream = base + "/v1/play?token=" + encodeURIComponent(token) + "&path=" + encodeURIComponent(f);
+  const suffix = await fetch(stream, { headers: { Range: "bytes=-3" } });
+  assert.equal(suffix.status, 206);
+  assert.equal(suffix.headers.get("content-range"), "bytes 7-9/10");
+  assert.equal(await suffix.text(), "789");
+  const reversed = await fetch(stream, { headers: { Range: "bytes=8-4" } });
+  assert.equal(reversed.status, 416);
+  assert.equal(reversed.headers.get("content-range"), "bytes */10");
+  const head = await fetch(stream, { method: "HEAD", headers: { Range: "bytes=3-5" } });
+  assert.equal(head.status, 206);
+  assert.equal(head.headers.get("content-length"), "3");
+  assert.equal(head.headers.get("content-range"), "bytes 3-5/10");
+});

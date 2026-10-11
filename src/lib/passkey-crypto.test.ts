@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { b64urlToBytes, bytesToB64url, derSigToRaw, sha256, verifyAssertion } from "./passkey-crypto.ts";
+import { b64urlToBytes, bytesToB64url, derSigToRaw, pageOrigin, sha256, verifyAssertion } from "./passkey-crypto.ts";
 
 function rawToDer(raw: Uint8Array): Uint8Array {
   const size = raw.length / 2;
@@ -63,4 +63,26 @@ test("verifies an ES256 passkey assertion", async () => {
     rpId,
   });
   assert.equal(verified.signCount, 0);
+});
+
+test("accepts only the actual, approved relying party", () => {
+  const local = new Request("http://localhost:8080/api/passkey", {
+    method: "POST", headers: { Origin: "http://localhost:8080" },
+  });
+  assert.deepEqual(pageOrigin(local), { origin: "http://localhost:8080", rpId: "localhost" });
+
+  const spoofed = new Request("https://cinevo.fourtee2.digital/api/passkey", {
+    method: "POST", headers: { Origin: "https://attacker.example" },
+  });
+  assert.equal(pageOrigin(spoofed), null);
+
+  const unrelatedHost = new Request("https://attacker.example/api/passkey", {
+    method: "POST", headers: { Origin: "https://attacker.example" },
+  });
+  assert.equal(pageOrigin(unrelatedHost), null);
+
+  const prod = new Request("https://cinevo.fourtee2.digital/api/passkey", {
+    method: "POST", headers: { Origin: "https://cinevo.fourtee2.digital" },
+  });
+  assert.deepEqual(pageOrigin(prod), { origin: "https://cinevo.fourtee2.digital", rpId: "cinevo.fourtee2.digital" });
 });

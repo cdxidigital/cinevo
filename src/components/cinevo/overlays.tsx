@@ -1,5 +1,6 @@
+import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { Check, ChevronLeft, ListPlus, Play, Search, Star, X } from "lucide-react";
+import { Cast, Check, ChevronLeft, ListPlus, Play, Search, Star, X } from "lucide-react";
 import { filterCatalog, similarTo, type Title } from "@/lib/catalog";
 import { libraryPool, titleById, useCinevo } from "@/lib/cinevo-store";
 import { askCinevo } from "@/lib/ask-cinevo";
@@ -8,9 +9,11 @@ import { mixForTheme } from "@/lib/house-mix";
 import { Rail, ArtImage } from "./poster";
 import { InstallerCards } from "./installers";
 import { HouseRemote, InstallCinevo } from "./house-remote";
+import { AccountSettings } from "./account";
 import { Link } from "@tanstack/react-router";
 import { THEMES } from "@/lib/library";
 import { SharePanel } from "./share-panel";
+import { openCast } from "./cast-sheet";
 import { getMyProfile } from "@/lib/sharing";
 
 const AI_PRESETS = [
@@ -39,9 +42,20 @@ export function Detail() {
   }, [id]);
   if (!title) return null;
   const similar = similarTo(title, libraryPool());
+  const director = title.director && title.director !== title.sourceLabel ? title.director : "";
+  const genres = (title.genres || []).filter((genre) => genre && genre !== title.sourceLabel && genre !== "Plex" && genre !== "Jellyfin");
+  const facts: [string, string][] = [
+    ["Year", title.year],
+    [title.kind === "series" ? "Episode" : "Length", title.runtime],
+    ["Rated", title.contentRating || ""],
+    ["Studio", title.studio || ""],
+    ["Director", director],
+    ["Genres", genres.join(", ") || title.genre],
+    ["From", title.sourceLabel || ""],
+  ].filter((item): item is [string, string] => Boolean(item[1] && item[1] !== "—"));
   return (
     <div className="house-detail">
-      <ArtImage src={title.still || title.poster} fallback="/stills/theater.jpg" className="house-detail__art" />
+      <ArtImage src={title.still || title.poster} fallback="/stills/theater.jpg" className="house-detail__art" eager />
       <div className="house-detail__veil" />
       <div className="house-detail__inner">
         <button type="button" onClick={closeTitle} className="house-back">
@@ -66,22 +80,12 @@ export function Detail() {
             ) : null}
           </p>
           <ul className="detail-facts">
-            <li>
-              <span>Kind</span>
-              <b>{title.kind === "series" ? "Series" : "Film"}</b>
-            </li>
-            <li>
-              <span>Length</span>
-              <b>{title.runtime || "—"}</b>
-            </li>
-            <li>
-              <span>Genre</span>
-              <b>{title.genre || "—"}</b>
-            </li>
-            <li>
-              <span>From</span>
-              <b>{title.sourceLabel || "This house"}</b>
-            </li>
+            {facts.map(([label, value]) => (
+              <li key={label}>
+                <span>{label}</span>
+                <b>{value}</b>
+              </li>
+            ))}
           </ul>
           <div className="house-actions">
             <button type="button" onClick={() => play(title.id)} className="house-btn house-btn--play">
@@ -98,12 +102,16 @@ export function Detail() {
             >
               {queued ? "Queued" : "Tonight"}
             </button>
+            <button type="button" onClick={() => openCast({ titleId: title.id })} className="house-btn house-btn--ghost">
+              <Cast size={16} /> Cast
+            </button>
           </div>
           <p className="mt-7 max-w-xl text-cine-muted">{title.synopsis}</p>
           <p className="mt-4 font-ui text-sm text-cine-faint">
-            {title.sourceLabel ? `From ${title.sourceLabel}` : null}
-            {title.director && title.director !== title.sourceLabel ? ` · Dir. ${title.director}` : null}
-            {title.cast.length ? ` · ${title.cast.join(" · ")}` : null}
+            {title.writers?.length ? `Written by ${title.writers.join(", ")}` : null}
+            {title.writers?.length && title.cast.length ? " · " : null}
+            {title.cast.length ? `Cast · ${title.cast.join(", ")}` : null}
+            {title.folder ? ` · ${title.folder.split("/").filter(Boolean).slice(-2).join(" / ")}` : null}
           </p>
         </div>
         <form
@@ -154,18 +162,29 @@ function SearchThumb({ title }: { title: Title }) {
 export function SearchOverlay() {
   const open = useCinevo((s) => s.searchOpen);
   const setSearchOpen = useCinevo((s) => s.setSearchOpen);
+  const setLibraryQuery = useCinevo((s) => s.setLibraryQuery);
+  const setRoom = useCinevo((s) => s.setRoom);
   const openTitle = useCinevo((s) => s.openTitle);
+  const navigate = useNavigate();
   const [q, setQ] = useState("");
   const extra = useCinevo((s) => s.localTitles);
   const remote = useCinevo((s) => s.remoteTitles);
   const results = useMemo(() => {
     const query = q.trim();
     if (!query) return [];
-    return filterCatalog({ query, pool: [...extra, ...remote] }).slice(0, 8);
+    return filterCatalog({ query, pool: [...extra, ...remote] }).slice(0, 24);
   }, [q, extra, remote]);
   useEffect(() => {
     if (!open) setQ("");
   }, [open]);
+  const showInLibrary = () => {
+    const query = q.trim();
+    if (!query) return;
+    setLibraryQuery(query);
+    setRoom("browse");
+    setSearchOpen(false);
+    void navigate({ to: "/app", search: { room: "browse" } });
+  };
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-cine-bg/80 p-4 pt-16"
@@ -185,10 +204,7 @@ export function SearchOverlay() {
             aria-label="Search your library"
             className="h-12 flex-1 bg-transparent font-ui text-base outline-none"
             onKeyDown={(e) => {
-              if (e.key === "Enter" && q.trim() && results[0]) {
-                openTitle(results[0].id);
-                setSearchOpen(false);
-              }
+              if (e.key === "Enter" && q.trim()) showInLibrary();
             }}
           />
           <button type="button" aria-label="Close search" className="flex size-11 items-center justify-center" onClick={() => setSearchOpen(false)}>
@@ -199,11 +215,16 @@ export function SearchOverlay() {
           {extra.length + remote.length === 0
             ? "Nothing in your library yet."
             : !q.trim()
-              ? "Type a title, person, or genre."
+              ? "Type a title, person, year, folder, or studio."
               : results.length
-                ? `${results.length} ${results.length === 1 ? "title" : "titles"} · Enter opens · Esc`
+                ? `${results.length} ${results.length === 1 ? "match" : "matches"} · Enter opens the library`
                 : "No matches."}
         </p>
+        {q.trim() && results.length ? (
+          <button type="button" className="house-btn house-btn--ghost mt-3 h-11 w-full" onClick={showInLibrary}>
+            Show all in the library
+          </button>
+        ) : null}
         <div className="search-results">
           {results.map((t) => (
             <button
@@ -219,7 +240,9 @@ export function SearchOverlay() {
               <span className="min-w-0">
                 <b className="block truncate font-ui">{t.title}</b>
                 <small className="text-cine-faint">
-                  {t.year} · {t.genre}
+                  {[t.year, t.genre, t.studio, t.contentRating, t.folder?.split("/").filter(Boolean).slice(-1)[0]]
+                    .filter(Boolean)
+                    .join(" · ")}
                 </small>
               </span>
             </button>
@@ -250,12 +273,12 @@ export function SettingsModal() {
   return (
     <div className="fixed inset-0 z-40 overflow-y-auto bg-cine-bg/80 p-4" onMouseDown={() => setSettingsOpen(false)}>
       <section
-        className="glass-strong mx-auto mt-16 max-w-lg rounded-xl p-5"
+        className="glass-strong mx-auto my-6 w-full max-w-lg rounded-xl p-5"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <header className="mb-4 flex items-start justify-between">
           <div>
-            <p className="font-ui text-xs font-semibold tracking-[0.12em] text-cine-cyan">LOCAL PREFERENCES</p>
+            <p className="font-ui text-xs font-semibold tracking-[0.12em] text-cine-cyan">HOUSE</p>
             <h2 className="font-ui text-lg font-semibold tracking-tight">Settings</h2>
           </div>
           <button type="button" aria-label="Close settings" onClick={() => setSettingsOpen(false)}>
@@ -263,6 +286,7 @@ export function SettingsModal() {
           </button>
         </header>
         <div className="space-y-3">
+          <AccountSettings />
           <p className="font-ui text-xs font-semibold tracking-[0.1em] text-cine-cyan">THEME</p>
           <div className="theme-grid" role="listbox" aria-label="Theme">
             {THEMES.map((t) => {

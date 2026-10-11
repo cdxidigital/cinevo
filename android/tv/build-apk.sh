@@ -30,6 +30,7 @@ if [[ ! -f "$KEYSTORE" ]]; then
     -dname "CN=CINEVO TV, O=CINEVO, C=AU"
 fi
 "$BT/apksigner" sign --ks "$KEYSTORE" --ks-pass pass:cinevo-tv --key-pass pass:cinevo-tv \
+  --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
   --out "$OUT" "$WORK/aligned.apk"
 "$BT/apksigner" verify --verbose "$OUT"
 echo "wrote $OUT"

@@ -207,6 +207,25 @@ function wrapText(ctx: CanvasRenderingContext2D, text: string, x: number, y: num
   if (line) ctx.fillText(line, x, yy);
 }
 
+const generatedCovers = new Map<string, string>();
+
+export function isGenericArt(url?: string) {
+  if (!url) return true;
+  return url.includes("/stills/theater.jpg");
+}
+
+/** A real poster when we have one. Otherwise a title card, so nothing is left blank. */
+export function coverFor(title: string, accent: Accent = "cyan", poster?: string) {
+  if (poster && !isGenericArt(poster)) return poster;
+  const key = `${accent}\0${title}`;
+  const cached = generatedCovers.get(key);
+  if (cached) return cached;
+  const made = makePoster(title || "CINEVO", accent);
+  if (generatedCovers.size > 500) generatedCovers.clear();
+  generatedCovers.set(key, made);
+  return made;
+}
+
 export function remoteTitle(input: {
   id: string;
   title: string;
@@ -223,6 +242,9 @@ export function remoteTitle(input: {
   rating?: number;
   cast?: string[];
   director?: string;
+  studio?: string;
+  contentRating?: string;
+  writers?: string[];
   poster?: string;
   still?: string;
 }): LibraryTitle {
@@ -244,6 +266,9 @@ export function remoteTitle(input: {
         : `Indexed from ${input.sourceLabel}. CINEVO can proxy playback from this server.`),
     cast: input.cast || [],
     director: input.director || input.sourceLabel,
+    studio: input.studio || "",
+    contentRating: input.contentRating || "",
+    writers: input.writers || [],
     rating: input.rating || 0,
     addedAt: new Date().toISOString().slice(0, 10),
     poster: input.poster || makePoster(input.title, accent),

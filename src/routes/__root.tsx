@@ -29,7 +29,7 @@ export const Route = createRootRoute({
       { name: "apple-mobile-web-app-title", content: APP_NAME },
       { name: "author", content: "CDXI" },
       { name: "publisher", content: "Fourtee2 Digital" },
-      { name: "theme-color", content: "#060910" },
+      { name: "theme-color", content: "#1A1A1E" },
       {
         name: "description",
         content: "CINEVO is a private cinema created by CDXI and distributed as a Fourtee2 Digital project.",
@@ -45,7 +45,7 @@ export const Route = createRootRoute({
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
       {
         rel: "stylesheet",
-        href: "https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,400..700;1,14..32,400..600&family=JetBrains+Mono:wght@400;500;600&family=Montserrat:wght@600;700&display=swap",
+        href: "https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Poppins:wght@400;500;600;700&display=swap",
       },
     ],
   }),

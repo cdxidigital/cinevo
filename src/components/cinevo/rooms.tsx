@@ -1,4 +1,4 @@
-import { Clock3, ChevronLeft, Library, Play, Plus, Server, Settings2, Share2, Shuffle, Sparkles, Star } from "lucide-react";
+import { Cast, ChevronLeft, Clock3, Folder, Library, Play, Search, Server, Shuffle, Star, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   MOODS,
@@ -9,15 +9,17 @@ import {
   recentlyAdded,
   type Title,
 } from "@/lib/catalog";
-import { titleById, useCinevo, type Room, type SourceFilter } from "@/lib/cinevo-store";
+import { titleById, useCinevo, progressBands, type LibrarySort, type Room, type SourceFilter } from "@/lib/cinevo-store";
 import { useCurrentUser } from "@/lib/auth/use-current-user";
 import { mostPlayed, tasteFrom } from "@/lib/house-tools";
 import { isLoopbackUrl } from "@/lib/playback-urls";
 import { useLibrary } from "@/lib/use-library";
-import { findFolder, mapFolderNetwork, titlesInFolder } from "@/lib/folder-map";
-import { episodeLabel, episodeMark, onDeck, organizeLibrary, type PlexShow } from "@/lib/plex-shelf";
+import { findFolder, folderOf, mapFolderNetwork, titlesInFolder, type FolderBranch } from "@/lib/folder-map";
+import { isGenericArt } from "@/lib/library";
+import { episodeLabel, episodeMark, onDeck, organizeLibrary, sortShows, type PlexShow } from "@/lib/plex-shelf";
 import { HouseCard } from "./onboarding";
-import { Rail, ArtImage, LibraryBoard } from "./poster";
+import { openCast } from "./cast-sheet";
+import { Rail, ArtImage, CoverImg, LibraryBoard, SeenBar } from "./poster";
 import { AddLibrary } from "./add-library";
 import { ToolsRoom } from "./tools-room";
 import { BrandKicker } from "./logo";
@@ -81,84 +83,6 @@ function OsDeck({
         );
       })}
     </div>
-  );
-}
-
-function OsDock({
-  link,
-  libraries,
-  continueWatching,
-  onPlay,
-  onOpen,
-  onAdd,
-  onAsk,
-  onShare,
-  onSettings,
-}: {
-  link: { mode: "local" | "relay" | "idle"; label: string; detail: string };
-  libraries: number;
-  continueWatching: Title[];
-  onPlay: (id: string) => void;
-  onOpen: (id: string) => void;
-  onAdd: () => void;
-  onAsk: () => void;
-  onShare: () => void;
-  onSettings: () => void;
-}) {
-  const actions = [
-    { icon: Plus, label: "Add library", onClick: onAdd },
-    { icon: Sparkles, label: "Ask this house", onClick: onAsk },
-    { icon: Share2, label: "Sharing", onClick: onShare },
-    { icon: Settings2, label: "Settings", onClick: onSettings },
-  ];
-  return (
-    <aside className="os-dock" aria-label="House status">
-      <section className="os-card">
-        <header>
-          <span className="net-dot" data-mode={link.mode} aria-hidden="true" />
-          Server
-        </header>
-        <b>{link.label}</b>
-        <small>{libraries ? `${libraries} ${libraries === 1 ? "library" : "libraries"}` : link.detail}</small>
-      </section>
-      <section className="os-card">
-        <header>Now in progress</header>
-        {continueWatching.length ? (
-          <ul className="os-now">
-            {continueWatching.slice(0, 3).map((title) => (
-              <li key={title.id}>
-                <button type="button" onClick={() => onOpen(title.id)}>
-                  <ArtImage src={title.still || title.poster} fallback="/stills/neon-alley.jpg" className="os-now__art" />
-                  <span>
-                    <b>{title.title}</b>
-                    <small>{title.runtime}</small>
-                  </span>
-                </button>
-                <button type="button" className="os-now__play" aria-label={`Play ${title.title}`} onClick={() => onPlay(title.id)}>
-                  <Play size={12} fill="currentColor" />
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <small>Start a title and it stays here.</small>
-        )}
-      </section>
-      <section className="os-card">
-        <header>Quick actions</header>
-        <div className="os-actions">
-          {actions.map((action) => {
-            const Icon = action.icon;
-            return (
-              <button key={action.label} type="button" onClick={action.onClick}>
-                <Icon size={15} />
-                {action.label}
-              </button>
-            );
-          })}
-        </div>
-      </section>
-    </aside>
   );
 }
 
@@ -275,6 +199,7 @@ function FolderNetwork({
         <div className="house-sources" role="list" aria-label="Folders here">
           {nodes.map((node) => (
             <button key={node.path} type="button" className="house-chip" onClick={() => onChange(node.path)}>
+              <Folder size={14} />
               {node.name}
               <span className="folder-network__count">{node.count || node.children.length}</span>
             </button>
@@ -285,16 +210,116 @@ function FolderNetwork({
   );
 }
 
+function branchIds(node: FolderBranch): string[] {
+  return [...node.titleIds, ...node.children.flatMap(branchIds)];
+}
+
+function postersFor(node: FolderBranch, titles: Title[]) {
+  const wanted = new Set(branchIds(node));
+  const found: string[] = [];
+  for (const title of titles) {
+    if (!wanted.has(title.id)) continue;
+    const art = !isGenericArt(title.showPoster) ? title.showPoster : !isGenericArt(title.poster) ? title.poster : "";
+    if (!art || found.includes(art)) continue;
+    found.push(art);
+    if (found.length === 4) break;
+  }
+  return found;
+}
+
+function FolderPosters({ sources }: { sources: string[] }) {
+  const [broken, setBroken] = useState<string[]>([]);
+  const live = sources.filter((src) => !broken.includes(src));
+  return (
+    <span className={`folder-card__art is-${Math.min(live.length, 4) || 0}`}>
+      {live.length ? (
+        live.map((src) => (
+          <img key={src} src={src} alt="" onError={() => setBroken((list) => (list.includes(src) ? list : [...list, src]))} />
+        ))
+      ) : (
+        <Folder size={28} />
+      )}
+      <i className="folder-card__badge" aria-hidden="true">
+        <Folder size={14} />
+      </i>
+    </span>
+  );
+}
+
+function titlesHere(titles: Title[], path: string) {
+  return titles.filter((title) => {
+    const folder = folderOf(title);
+    const full = folder ? `${title.sourceLabel || "Library"}/${folder}` : "";
+    if (!path) return !folder;
+    return full === path;
+  });
+}
+
+function FolderBrowser({
+  titles,
+  extras,
+  path,
+  onOpen,
+}: {
+  titles: Title[];
+  extras: { sourceLabel: string; folders?: string[] }[];
+  path: string;
+  onOpen: (path: string) => void;
+}) {
+  const trees = useMemo(() => mapFolderNetwork(titles, extras), [titles, extras]);
+  const current = path ? findFolder(trees, path) : null;
+  const nodes = current ? current.children : trees;
+  const here = titlesHere(titles, path);
+  const crumbs = path.split("/").filter(Boolean);
+  if (!trees.length && !here.length) {
+    return <p className="library-empty">No folders in this library yet. Titles will appear here once a scan records their path.</p>;
+  }
+  return (
+    <div className="folder-view">
+      <div className="house-sources" role="navigation" aria-label="Folder path">
+        <button type="button" className={path ? "house-chip" : "house-chip is-on"} onClick={() => onOpen("")}>
+          <Folder size={14} /> Folders
+        </button>
+        {crumbs.map((crumb, index) => {
+          const next = crumbs.slice(0, index + 1).join("/");
+          return (
+            <button key={next} type="button" className={next === path ? "house-chip is-on" : "house-chip"} onClick={() => onOpen(next)}>
+              {crumb}
+            </button>
+          );
+        })}
+      </div>
+      {nodes.length ? (
+        <div className="folder-grid">
+          {nodes.map((node) => (
+            <button key={node.path} type="button" className="folder-card" onClick={() => onOpen(node.path)}>
+              <FolderPosters sources={postersFor(node, titles)} />
+              <span className="folder-card__copy">
+                <b>{node.name}</b>
+                <small>
+                  {node.count} {node.count === 1 ? "title" : "titles"}
+                  {node.children.length ? ` · ${node.children.length} ${node.children.length === 1 ? "folder" : "folders"}` : ""}
+                </small>
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {here.length ? <LibraryBoard titles={here} /> : null}
+    </div>
+  );
+}
+
 export function StageRoom() {
   const play = useCinevo((s) => s.play);
   const openTitle = useCinevo((s) => s.openTitle);
-  const progress = useCinevo((s) => s.progress);
+  const bands = useCinevo((s) => progressBands(s.progress));
+  const progress = useMemo(() => useCinevo.getState().progress, [bands]);
   const favorites = useCinevo((s) => s.favorites);
   const tonight = useCinevo((s) => s.tonight);
   const mood = useCinevo((s) => s.mood);
   const shufflePlay = useCinevo((s) => s.shufflePlay);
   const setCoreOpen = useCinevo((s) => s.setCoreOpen);
-  const setSettingsOpen = useCinevo((s) => s.setSettingsOpen);
   const setRoom = useCinevo((s) => s.setRoom);
   const sourceFilter = useCinevo((s) => s.sourceFilter);
   const setSourceFilter = useCinevo((s) => s.setSourceFilter);
@@ -348,7 +373,7 @@ export function StageRoom() {
   return (
     <div className="house-home">
       <section className="house-hero" aria-labelledby="featured-title">
-        <ArtImage src={still} fallback="/stills/neon-alley.jpg" className="house-hero__art" />
+        <ArtImage src={still} fallback="/stills/neon-alley.jpg" className="house-hero__art" eager />
         <div className="house-hero__shade" />
         <div className="house-hero__copy">
           <p className="house-hello">{who ? `${hello}, ${who}` : hello}</p>
@@ -381,9 +406,14 @@ export function StageRoom() {
                 playLabel={heroProgress > 0 && heroProgress < 100 ? "Resume" : "Play"}
                 onMore={() => openTitle(hero.id)}
                 extra={
-                  <button type="button" onClick={shufflePlay} className="house-btn house-btn--ghost">
-                    <Shuffle size={16} /> Surprise me
-                  </button>
+                  <>
+                    <button type="button" onClick={shufflePlay} className="house-btn house-btn--ghost">
+                      <Shuffle size={16} /> Surprise me
+                    </button>
+                    <button type="button" onClick={() => openCast({ titleId: hero.id })} className="house-btn house-btn--ghost">
+                      <Cast size={16} /> Cast
+                    </button>
+                  </>
                 }
               />
             </>
@@ -492,19 +522,6 @@ export function StageRoom() {
             </div>
           )}
         </div>
-        {library.length ? (
-          <OsDock
-            link={link}
-            libraries={sources.length}
-            continueWatching={continueWatching}
-            onPlay={play}
-            onOpen={openTitle}
-            onAdd={() => setRoom("sidebar")}
-            onAsk={() => setCoreOpen(true, "ai")}
-            onShare={() => setCoreOpen(true, "sharing")}
-            onSettings={() => setSettingsOpen(true)}
-          />
-        ) : null}
       </div>
     </div>
   );
@@ -512,7 +529,8 @@ export function StageRoom() {
 
 function ShowWall({ shows, onOpen }: { shows: PlexShow[]; onOpen: (id: string) => void }) {
   const play = useCinevo((s) => s.play);
-  const progress = useCinevo((s) => s.progress);
+  const bands = useCinevo((s) => progressBands(s.progress));
+  const progress = useMemo(() => useCinevo.getState().progress, [bands]);
   if (!shows.length) return null;
   return (
     <div className="poster-grid">
@@ -523,7 +541,7 @@ function ShowWall({ shows, onOpen }: { shows: PlexShow[]; onOpen: (id: string) =
             <div className="poster-frame">
               <button type="button" className="block w-full" aria-label={`Open ${show.title}`} onClick={() => onOpen(show.id)}>
                 {show.poster ? (
-                  <img src={show.poster} alt="" className="aspect-2/3 w-full object-cover" />
+                  <CoverImg title={show.title} poster={show.poster} className="aspect-2/3 w-full object-cover" />
                 ) : (
                   <span className="poster-fallback">{show.title}</span>
                 )}
@@ -552,21 +570,56 @@ function ShowWall({ shows, onOpen }: { shows: PlexShow[]; onOpen: (id: string) =
   );
 }
 
+function ShowFacts({ show }: { show: PlexShow }) {
+  const sample = show.episodes;
+  const first = (read: (title: Title) => string | undefined) =>
+    sample.map(read).find((value) => value && value !== "—" && value !== show.sourceLabel) || "";
+  const genres = [...new Set(sample.flatMap((episode) => episode.genres || []))].filter(
+    (genre) => genre && genre !== "Plex" && genre !== "Jellyfin" && genre !== show.sourceLabel,
+  );
+  const cast = [...new Set(sample.flatMap((episode) => episode.cast || []))].slice(0, 6);
+  const facts = [
+    first((episode) => episode.studio) ? ["Studio", first((episode) => episode.studio)] : null,
+    first((episode) => episode.contentRating) ? ["Rated", first((episode) => episode.contentRating)] : null,
+    genres.length ? ["Genres", genres.slice(0, 4).join(", ")] : null,
+    first((episode) => episode.director) ? ["Director", first((episode) => episode.director)] : null,
+  ].filter((item): item is [string, string] => Boolean(item));
+  if (!facts.length && !cast.length) return null;
+  return (
+    <div className="show-facts">
+      {facts.length ? (
+        <ul className="detail-facts">
+          {facts.map(([label, value]) => (
+            <li key={label}>
+              <span>{label}</span>
+              <b>{value}</b>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {cast.length ? <p>Cast · {cast.join(", ")}</p> : null}
+    </div>
+  );
+}
+
 function SeasonBrowser({ show, onBack }: { show: PlexShow; onBack: () => void }) {
   const play = useCinevo((s) => s.play);
   const openTitle = useCinevo((s) => s.openTitle);
-  const progress = useCinevo((s) => s.progress);
   return (
     <div className="show-seasons">
       <button type="button" className="house-back" onClick={onBack}>
         <ChevronLeft size={16} /> Shows
       </button>
-      <header className="mt-4">
-        <h2>{show.title}</h2>
-        <p className="lede">
-          {show.year !== "—" ? `${show.year} · ` : ""}
-          {show.seasons.length} {show.seasons.length === 1 ? "season" : "seasons"} · {show.episodes.length} episodes
-        </p>
+      <header className="show-head">
+        <CoverImg title={show.title} poster={show.poster} className="show-head__poster" />
+        <div>
+          <h2>{show.title}</h2>
+          <p className="lede">
+            {show.year !== "—" ? `${show.year} · ` : ""}
+            {show.seasons.length} {show.seasons.length === 1 ? "season" : "seasons"} · {show.episodes.length} episodes
+          </p>
+          <ShowFacts show={show} />
+        </div>
       </header>
       {show.seasons.map((season) => (
         <section key={season.season} className="mt-8">
@@ -574,18 +627,14 @@ function SeasonBrowser({ show, onBack }: { show: PlexShow; onBack: () => void })
           <div className="library-list">
             {season.episodes.map((episode) => {
               const mark = episodeMark(episode);
-              const seen = progress[episode.id];
               return (
                 <article key={episode.id} className="library-row">
                   <button type="button" className="library-row__open" onClick={() => openTitle(episode.id)}>
+                    <CoverImg title={episode.title} poster={episode.poster} accent={episode.accent} className="library-thumb" />
                     <span>
                       <h3>{mark ? episodeLabel(mark) : episode.title}</h3>
                       <p>{[episode.runtime, episode.genre].filter(Boolean).join(" · ")}</p>
-                      {seen != null && seen > 0 ? (
-                        <i className="library-progress">
-                          <b style={{ width: `${Math.min(100, seen)}%` }} />
-                        </i>
-                      ) : null}
+                      <SeenBar id={episode.id} />
                     </span>
                   </button>
                   <button type="button" className="house-btn house-btn--play" onClick={() => play(episode.id)}>
@@ -601,37 +650,117 @@ function SeasonBrowser({ show, onBack }: { show: PlexShow; onBack: () => void })
   );
 }
 
+function decadeOf(year: string) {
+  const value = Number.parseInt(year, 10);
+  if (!Number.isFinite(value) || value < 1900) return "";
+  return `${Math.floor(value / 10) * 10}s`;
+}
+
+function unseen(id: string, progress: Record<string, number>) {
+  return (progress[id] ?? 0) < 90;
+}
+
+function narrowShow(show: PlexShow, episodes: Title[]): PlexShow {
+  const seasons = new Map<number, Title[]>();
+  for (const episode of episodes) {
+    const season = episodeMark(episode)?.season ?? 1;
+    const list = seasons.get(season) || [];
+    list.push(episode);
+    seasons.set(season, list);
+  }
+  return {
+    ...show,
+    episodes,
+    seasons: [...seasons.entries()].map(([season, rows]) => ({ season, episodes: rows })),
+  };
+}
+
 export function BrowseRoom({ kind: initialKind = "all" }: { kind?: "all" | "movie" | "series" }) {
-  const [kind, setKind] = useState<"all" | "movie" | "series">(initialKind);
+  const [kind, setKind] = useState<"all" | "movie" | "series" | "folders">(initialKind);
   const [genre, setGenre] = useState("All");
   const [folder, setFolder] = useState("");
   const [showId, setShowId] = useState<string | null>(null);
+  const [unwatched, setUnwatched] = useState(false);
+  const [decade, setDecade] = useState("All");
   const sources = useCinevo((s) => s.sources);
+  const bands = useCinevo((s) => progressBands(s.progress));
+  const progress = useMemo(() => useCinevo.getState().progress, [bands]);
+  const query = useCinevo((s) => s.libraryQuery);
+  const setLibraryQuery = useCinevo((s) => s.setLibraryQuery);
+  const sort = useCinevo((s) => s.prefs.librarySort);
+  const patchPrefs = useCinevo((s) => s.patchPrefs);
   useEffect(() => {
     setKind(initialKind);
     setGenre("All");
+    setDecade("All");
     setShowId(null);
   }, [initialKind]);
   const library = useLibrary();
-  const scoped = useMemo(() => titlesInFolder(filterCatalog({ genre, pool: library }), folder), [genre, library, folder]);
+  const scoped = useMemo(() => titlesInFolder(filterCatalog({ genre, query, pool: library }), folder), [genre, query, library, folder]);
   const shelf = useMemo(() => organizeLibrary(scoped), [scoped]);
+  const decades = useMemo(() => {
+    const found = new Set<string>();
+    for (const title of library) {
+      const label = decadeOf(title.year);
+      if (label) found.add(label);
+    }
+    return ["All", ...[...found].sort().reverse()];
+  }, [library]);
+  const movies = useMemo(() => {
+    return shelf.movies.filter((title) => {
+      if (decade !== "All" && decadeOf(title.year) !== decade) return false;
+      if (unwatched && !unseen(title.id, progress)) return false;
+      return true;
+    });
+  }, [shelf.movies, decade, unwatched, progress]);
+  const shows = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const next = shelf.shows.flatMap((show) => {
+      let episodes = show.episodes;
+      if (q && !show.title.toLowerCase().includes(q)) {
+        episodes = episodes.filter((episode) => filterCatalog({ query: q, pool: [episode] }).length > 0);
+      }
+      if (decade !== "All") {
+        const inDecade = decadeOf(show.year) === decade || episodes.some((episode) => decadeOf(episode.year) === decade);
+        if (!inDecade) return [];
+      }
+      if (unwatched) episodes = episodes.filter((episode) => unseen(episode.id, progress));
+      if (!episodes.length) return [];
+      return [narrowShow(show, episodes)];
+    });
+    return sortShows(next, sort);
+  }, [shelf.shows, query, decade, unwatched, progress, sort]);
   useEffect(() => {
     setShowId(null);
-  }, [folder, genre, kind]);
-  const show = shelf.shows.find((item) => item.id === showId) || null;
+  }, [folder, genre, kind, query, decade, unwatched]);
+  const show = shows.find((item) => item.id === showId) || null;
   const genres = genresIn(library);
   const heading = initialKind === "movie" ? "Movies" : initialKind === "series" ? "TV Shows" : "Library";
-  const empty = !shelf.movies.length && !shelf.shows.length;
+  const empty = !movies.length && !shows.length;
   return (
     <div className="house-page library-os">
       <header>
         <BrandKicker>CINEVO library</BrandKicker>
         <h1>{heading}</h1>
-        <p className="lede">Movies stay one poster. A show opens into seasons and episodes.</p>
+        <p className="lede">Search, filter, and sort the way a library does. Movies stay posters. A show opens into seasons.</p>
       </header>
+      <label className="library-find">
+        <Search size={16} />
+        <input
+          value={query}
+          onChange={(event) => setLibraryQuery(event.target.value)}
+          placeholder="Search titles, people, years, folders, studios"
+          aria-label="Search this library"
+        />
+        {query ? (
+          <button type="button" aria-label="Clear search" onClick={() => setLibraryQuery("")}>
+            <X size={16} />
+          </button>
+        ) : null}
+      </label>
       <div className="command-strip">
         <div className="house-sources" role="tablist" aria-label="Kind">
-          {(["all", "movie", "series"] as const).map((k) => (
+          {(["all", "movie", "series", "folders"] as const).map((k) => (
             <button
               key={k}
               type="button"
@@ -640,9 +769,28 @@ export function BrowseRoom({ kind: initialKind = "all" }: { kind?: "all" | "movi
               onClick={() => setKind(k)}
               className={kind === k ? "house-chip is-on" : "house-chip"}
             >
-              {k === "all" ? "All" : k === "movie" ? "Movies" : "TV Shows"}
+              {k === "all" ? "All" : k === "movie" ? "Movies" : k === "series" ? "TV Shows" : "Folders"}
             </button>
           ))}
+        </div>
+        <label className="library-sort">
+          <span>Sort</span>
+          <select
+            aria-label="Sort library"
+            value={sort}
+            onChange={(event) => patchPrefs({ librarySort: event.target.value as LibrarySort })}
+          >
+            <option value="title">Title</option>
+            <option value="year">Year</option>
+            <option value="added">Date added</option>
+            <option value="rating">Rating</option>
+            <option value="runtime">Duration</option>
+          </select>
+        </label>
+        <div className="house-sources" role="tablist" aria-label="Watched">
+          <button type="button" className={unwatched ? "house-chip is-on" : "house-chip"} aria-pressed={unwatched} onClick={() => setUnwatched((on) => !on)}>
+            Unwatched
+          </button>
         </div>
         {genres.length > 1 ? (
           <div className="house-sources" role="tablist" aria-label="Genre">
@@ -660,28 +808,63 @@ export function BrowseRoom({ kind: initialKind = "all" }: { kind?: "all" | "movi
             ))}
           </div>
         ) : null}
+        {decades.length > 2 ? (
+          <div className="house-sources" role="tablist" aria-label="Decade">
+            {decades.map((item) => (
+              <button
+                key={item}
+                type="button"
+                role="tab"
+                aria-selected={decade === item}
+                onClick={() => setDecade(item)}
+                className={decade === item ? "house-chip is-on" : "house-chip"}
+              >
+                {item === "All" ? "All years" : item}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {kind === "folders" ? null : (
         <FolderNetwork
           titles={library}
           extras={sources.map((source) => ({ sourceLabel: source.name, folders: source.folders }))}
           value={folder}
           onChange={setFolder}
         />
+        )}
       </div>
-      {show && kind !== "movie" ? (
+      {kind === "folders" ? (
+        <FolderBrowser
+          titles={library.filter((title) => {
+            if (query.trim() && !filterCatalog({ query, pool: [title] }).length) return false;
+            if (genre !== "All" && !(title.genres || []).includes(genre) && title.genre !== genre) return false;
+            if (decade !== "All" && decadeOf(title.year) !== decade) return false;
+            if (unwatched && !unseen(title.id, progress)) return false;
+            return true;
+          })}
+          extras={sources.map((source) => ({ sourceLabel: source.name, folders: source.folders }))}
+          path={folder}
+          onOpen={setFolder}
+        />
+      ) : show && kind !== "movie" ? (
         <SeasonBrowser show={show} onBack={() => setShowId(null)} />
       ) : (
         <>
-          {empty ? <p className="library-empty">No titles yet. Import a library from Plex, Jellyfin, a folder, or Node.</p> : null}
-          {kind !== "series" && shelf.movies.length ? (
+          {empty ? (
+            <p className="library-empty">
+              {library.length ? "Nothing matches this search." : "No titles yet. Import a library from Plex, Jellyfin, a folder, or Node."}
+            </p>
+          ) : null}
+          {kind !== "series" && movies.length ? (
             <section>
               {kind === "all" ? <h2 className="rail-heading">Movies</h2> : null}
-              <LibraryBoard titles={shelf.movies} />
+              <LibraryBoard titles={movies} toolbar={false} />
             </section>
           ) : null}
-          {kind !== "movie" && shelf.shows.length ? (
+          {kind !== "movie" && shows.length ? (
             <section className={kind === "all" ? "mt-10" : undefined}>
               {kind === "all" ? <h2 className="rail-heading">TV Shows</h2> : null}
-              <ShowWall shows={shelf.shows} onOpen={setShowId} />
+              <ShowWall shows={shows} onOpen={setShowId} />
             </section>
           ) : null}
         </>

@@ -143,6 +143,9 @@ export const jellyfinImportSections = createServerFn({ method: "POST" })
       rating: number;
       cast: string[];
       director: string;
+      studio: string;
+      contentRating: string;
+      writers: string[];
       sourceLabel: string;
       path: string;
       folder: string;
@@ -160,7 +163,7 @@ export const jellyfinImportSections = createServerFn({ method: "POST" })
             ParentId: key,
             IncludeItemTypes: "Movie,Episode",
             Recursive: "true",
-            Fields: "Overview,Genres,People,Path,ProductionYear,PremiereDate,CommunityRating,RunTimeTicks,ImageTags,BackdropImageTags",
+            Fields: "Overview,Genres,People,Path,ProductionYear,PremiereDate,CommunityRating,RunTimeTicks,ImageTags,BackdropImageTags,Studios,OfficialRating,SeriesId,SeriesPrimaryImageTag",
             Limit: "200",
             StartIndex: String(start),
             SortBy: "SortName",
@@ -197,6 +200,9 @@ export const jellyfinImportSections = createServerFn({ method: "POST" })
               rating: facts.rating,
               cast: facts.cast,
               director: facts.director,
+              studio: facts.studio,
+              contentRating: facts.contentRating,
+              writers: facts.writers,
               sourceLabel: data.sourceLabel,
               path: String(item.Id || ""),
               folder,

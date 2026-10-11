@@ -39,7 +39,7 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.parseColor("#050505"));
+        root.setBackgroundColor(Color.parseColor("#1A1A1E"));
         setContentView(root);
 
         setup = new LinearLayout(this);
@@ -56,7 +56,7 @@ public class MainActivity extends Activity {
 
         TextView tag = new TextView(this);
         tag.setText("Your media. Your moment.");
-        tag.setTextColor(Color.parseColor("#55CFFF"));
+        tag.setTextColor(Color.parseColor("#FF4DA5"));
         tag.setTextSize(14);
         tag.setPadding(0, dp(8), 0, 0);
         setup.addView(tag);
@@ -90,28 +90,32 @@ public class MainActivity extends Activity {
         connect.setText("Connect");
         connect.setAllCaps(false);
         connect.setTypeface(Typeface.DEFAULT_BOLD);
-        connect.setTextColor(Color.parseColor("#050505"));
-        connect.setBackground(rounded("#55CFFF", null));
+        connect.setTextColor(Color.WHITE);
+        connect.setBackground(rounded("#8B2FFF", null));
         connect.setMinHeight(dp(56));
         connect.setOnClickListener(v -> connect());
         setup.addView(connect);
 
         TextView fine = new TextView(this);
-        fine.setText("CINEVO player 2.0. Sideload. Not a Play Store app.");
+        fine.setText("CINEVO. A CDXI app, distributed as a Fourtee2 Digital project.");
         fine.setTextColor(Color.parseColor("#8a8a8a"));
         fine.setTextSize(12);
         fine.setPadding(0, dp(14), 0, 0);
         setup.addView(fine);
 
         web = new WebView(this);
-        web.setBackgroundColor(Color.parseColor("#050505"));
+        web.setBackgroundColor(Color.parseColor("#1A1A1E"));
         WebSettings settings = web.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setUseWideViewPort(true);
         settings.setLoadWithOverviewMode(true);
+        settings.setAllowFileAccess(false);
+        settings.setAllowContentAccess(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
+        String agent = settings.getUserAgentString();
+        settings.setUserAgentString(agent + " CINEVOAndroid/2");
         web.setWebChromeClient(new WebChromeClient() {
             private View custom;
             private CustomViewCallback callback;
@@ -210,6 +214,15 @@ public class MainActivity extends Activity {
         label.setLetterSpacing(0.04f);
         LinearLayout.LayoutParams grow = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
         label.setLayoutParams(grow);
+        Button cast = new Button(this);
+        cast.setText("Cast");
+        cast.setAllCaps(false);
+        cast.setTypeface(Typeface.DEFAULT_BOLD);
+        cast.setTextColor(Color.parseColor("#8B2FFF"));
+        cast.setBackgroundColor(Color.TRANSPARENT);
+        cast.setOnClickListener(v -> web.evaluateJavascript(
+                "window.dispatchEvent(new CustomEvent('cinevo-open-cast'))",
+                null));
         Button change = new Button(this);
         change.setText("Change house");
         change.setAllCaps(false);
@@ -217,6 +230,7 @@ public class MainActivity extends Activity {
         change.setBackgroundColor(Color.TRANSPARENT);
         change.setOnClickListener(v -> showSetup(""));
         bar.addView(label);
+        bar.addView(cast);
         bar.addView(change);
         root.addView(bar);
         web.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));

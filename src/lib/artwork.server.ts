@@ -66,10 +66,11 @@ async function plexItems(uri: string, token: string, clientId: string, keys: str
             Director: row.director ? [{ tag: row.director }] : [],
             thumb: row.posterPath,
             art: row.stillPath,
+            grandparentThumb: row.showPosterPath,
           },
           row.ratingKey,
         );
-        items.push({ id: row.id, ...facts, runtime: row.runtime || facts.runtime });
+        items.push({ id: row.id, ...facts, runtime: row.runtime || facts.runtime, showPosterPath: row.showPosterPath || facts.showPosterPath });
       }
     } catch {
       /* this server may be offline */
@@ -84,7 +85,7 @@ async function jellyfinItems(uri: string, token: string, clientId: string, userI
   const headers = jellyfinHeader(clientId, token);
   const params = new URLSearchParams({
     Ids: ids.slice(0, 80).join(","),
-    Fields: "Overview,Genres,People,ProductionYear,PremiereDate,RunTimeTicks,CommunityRating,ImageTags,BackdropImageTags",
+    Fields: "Overview,Genres,People,ProductionYear,PremiereDate,RunTimeTicks,CommunityRating,ImageTags,BackdropImageTags,Studios,OfficialRating,SeriesId,SeriesPrimaryImageTag",
   });
   const path = userId ? `/Users/${encodeURIComponent(userId)}/Items?${params}` : `/Items?${params}`;
   try {
@@ -109,14 +110,27 @@ export async function refreshArtwork(input: {
   clientId?: string;
   userServerId?: string;
   keys: string[];
+  ticket?: string;
 }) {
-  const ticket = await createArtTicket(input);
-  if (!ticket.ok) return ticket;
   const uri = input.uri.trim().replace(/\/$/, "");
+  let ticketId = input.ticket?.trim() || "";
+  if (ticketId) {
+    const sql = await getSql();
+    const rows = await sql`
+      select id from cinevo_play_tickets
+      where id = ${ticketId} and user_id = ${input.userId} and expires_at > now()
+    `;
+    if (!rows.length) ticketId = "";
+  }
+  if (!ticketId) {
+    const created = await createArtTicket(input);
+    if (!created.ok) return created;
+    ticketId = created.ticket;
+  }
   const keys = input.keys.map((key) => key.trim()).filter(Boolean).slice(0, 80);
   const items =
     input.provider === "plex"
       ? await plexItems(uri, input.token.trim(), input.clientId || "", keys)
       : await jellyfinItems(uri, input.token.trim(), input.clientId || "", input.userServerId || "", keys);
-  return { ok: true as const, ticket: ticket.ticket, items };
+  return { ok: true as const, ticket: ticketId, items };
 }

@@ -1,4 +1,4 @@
-import { factsFromPlex } from "./artwork-model.ts";
+import { factsFromPlex, safeArtPath } from "./artwork-model.ts";
 
 export type PlexConnection = {
   uri: string;
@@ -207,8 +207,12 @@ export function parsePlexMetadata(raw: unknown, sourceLabel: string) {
       rating: facts.rating,
       cast: facts.cast,
       director: facts.director,
+      studio: facts.studio,
+      contentRating: facts.contentRating,
+      writers: facts.writers,
       posterPath: facts.posterPath,
       stillPath: facts.stillPath,
+      showPosterPath: type === "episode" ? safeArtPath(String(m.grandparentThumb || "")) || "" : "",
       sourceLabel,
       folder: file ? folderFromFile(file) : "",
     };

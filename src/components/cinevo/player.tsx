@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import Hls from "hls.js";
 import { Activity, Bookmark, Cast, Download, Expand, Info, Pause, Play, SkipForward, Subtitles, Volume2, VolumeX, X } from "lucide-react";
 import { titleById, useCinevo } from "@/lib/cinevo-store";
-import { mediaUrl, sourceForTitle } from "@/lib/library";
+import { coverFor, mediaUrl, sourceForTitle } from "@/lib/library";
 import { needsBrowserCopy } from "@/lib/convert";
 import { reconnectFolders } from "@/lib/folder-handles";
 import { bumpWatch } from "@/lib/sharing";
@@ -11,7 +10,8 @@ import type { RemoteCommand } from "@/lib/remote-protocol";
 import { issuePlayback } from "@/lib/playback";
 import type { PlaybackFit } from "@/lib/playback-urls";
 import { nodePlayUrl } from "@/lib/node-client";
-import { castBlock, type WirelessVideo } from "@/lib/cast";
+import { type WirelessVideo } from "@/lib/cast";
+import { openCast } from "./cast-sheet";
 import { isLoopbackUrl } from "@/lib/playback-urls";
 import { averageColor, gateGain, noiseLevel, shapedMix } from "@/lib/house-mix";
 import { nextEpisode } from "@/lib/plex-shelf";
@@ -127,6 +127,8 @@ export function Player() {
   );
   const videoRef = useRef<HTMLVideoElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  const timelineRef = useRef<HTMLInputElement>(null);
+  const percentRef = useRef<HTMLSpanElement>(null);
   const audioRef = useRef<HouseAudio | null>(null);
   const [muted, setMuted] = useState(true);
   const [chrome, setChrome] = useState(true);
@@ -161,29 +163,34 @@ export function Player() {
         video.load();
       };
     }
-    if (!Hls.isSupported()) {
-      setRemoteErr("This browser cannot play a converted stream.");
-      return;
-    }
-    const hls = new Hls({ enableWorker: true, maxBufferLength: 30 });
     let closed = false;
-    const close = () => {
-      if (closed) return;
+    let player: { destroy: () => void } | null = null;
+    void import("hls.js").then(({ default: Hls }) => {
+      const node = videoRef.current;
+      if (closed || !node) return;
+      if (!Hls.isSupported()) {
+        setRemoteErr("This browser cannot play a converted stream.");
+        return;
+      }
+      const hls = new Hls({ enableWorker: true, maxBufferLength: 30 });
+      player = hls;
+      hls.loadSource(file);
+      hls.attachMedia(node);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        if (useCinevo.getState().playing) void videoRef.current?.play().catch(() => undefined);
+      });
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (!data.fatal || closed) return;
+        setPlaybackFailed(true);
+        setRemoteErr("CINEVO could not convert this file. Install ffmpeg on the computer running CINEVO Node, then play it again.");
+        closed = true;
+        hls.destroy();
+      });
+    });
+    return () => {
       closed = true;
-      hls.destroy();
+      player?.destroy();
     };
-    hls.loadSource(file);
-    hls.attachMedia(video);
-    hls.on(Hls.Events.MANIFEST_PARSED, () => {
-      if (useCinevo.getState().playing) void video.play().catch(() => undefined);
-    });
-    hls.on(Hls.Events.ERROR, (_event, data) => {
-      if (!data.fatal) return;
-      setPlaybackFailed(true);
-      setRemoteErr("CINEVO could not convert this file. Install ffmpeg on the computer running CINEVO Node, then play it again.");
-      close();
-    });
-    return close;
   }, [file, converting]);
 
   useEffect(() => {
@@ -207,38 +214,6 @@ export function Player() {
       remote.removeEventListener("disconnect", mark);
     };
   }, [file]);
-
-  const onCast = () => {
-    const video = videoRef.current as WirelessVideo | null;
-    if (!video || !file) return;
-    const block = castBlock(file, window.location.href);
-    if (block === "local") {
-      flash("This file is only in this browser. Cast and AirPlay need a proxied stream the TV can open.");
-      return;
-    }
-    if (block === "loopback") {
-      flash("This page is on localhost. A TV cannot open it. Use the house address on your network.");
-      return;
-    }
-    const remote = video.remote;
-    if (remote?.prompt) {
-      void remote.prompt().catch((err: unknown) => {
-        const name = err instanceof DOMException ? err.name : "";
-        if (name === "NotAllowedError" || name === "AbortError") return;
-        if (typeof video.webkitShowPlaybackTargetPicker === "function") {
-          video.webkitShowPlaybackTargetPicker();
-          return;
-        }
-        flash("No Cast or AirPlay receiver answered. Use Chrome on Android, or Safari on iPhone or Mac, on the same network.");
-      });
-      return;
-    }
-    if (typeof video.webkitShowPlaybackTargetPicker === "function") {
-      video.webkitShowPlaybackTargetPicker();
-      return;
-    }
-    flash("This browser has no Cast or AirPlay. Use Chrome on Android, or Safari on iPhone or Mac.");
-  };
 
   useEffect(() => {
     let cancelled = false;
@@ -432,8 +407,12 @@ export function Player() {
       return;
     }
     let timer = window.setTimeout(() => setChrome(false), 2200);
+    let last = 0;
     const bump = () => {
-      setChrome(true);
+      const now = performance.now();
+      if (now - last < 200) return;
+      last = now;
+      setChrome((on) => (on ? on : true));
       window.clearTimeout(timer);
       timer = window.setTimeout(() => setChrome(false), 2200);
     };
@@ -501,6 +480,9 @@ export function Player() {
       } else {
         video.pause();
         useCinevo.setState({ playing: false });
+        if (Number.isFinite(video.duration) && video.duration > 0) {
+          setProgress(title.id, (video.currentTime / video.duration) * 100);
+        }
       }
       return;
     }
@@ -508,23 +490,27 @@ export function Player() {
     else togglePlay();
   };
 
+  const remoteApi = useRef({ play, stopPlay, onToggle, setProgress, seek, setMuted });
+  remoteApi.current = { play, stopPlay, onToggle, setProgress, seek, setMuted };
+
   useEffect(() => {
     const onRemote = (event: Event) => {
       const command = (event as CustomEvent<RemoteCommand>).detail;
       if (!command) return;
+      const api = remoteApi.current;
       const video = videoRef.current;
       const current = titleById(useCinevo.getState().playingId);
       if (command.type === "playTitle") {
-        play(command.titleId);
+        api.play(command.titleId);
         return;
       }
       if (!current) return;
       if (command.type === "stop") {
-        stopPlay();
+        api.stopPlay();
         return;
       }
       if (command.type === "toggle") {
-        onToggle();
+        api.onToggle();
         return;
       }
       if (command.type === "play") {
@@ -535,13 +521,16 @@ export function Player() {
       if (command.type === "pause") {
         if (video) video.pause();
         useCinevo.setState({ playing: false });
+        if (video && Number.isFinite(video.duration) && video.duration > 0) {
+          api.setProgress(current.id, (video.currentTime / video.duration) * 100);
+        }
         return;
       }
       if (command.type === "volume") {
         if (!video) return;
         video.volume = command.value;
         video.muted = command.value <= 0;
-        setMuted(command.value <= 0);
+        api.setMuted(command.value <= 0);
         return;
       }
       if (command.type === "seek" && video && Number.isFinite(video.duration) && video.duration > 0) {
@@ -550,14 +539,14 @@ export function Player() {
         } else if (typeof command.to === "number") {
           video.currentTime = (command.to / 100) * video.duration;
         }
-        setProgress(current.id, (video.currentTime / video.duration) * 100);
+        api.setProgress(current.id, (video.currentTime / video.duration) * 100);
       } else if (command.type === "seek" && typeof command.to === "number") {
-        seek(command.to);
+        api.seek(command.to);
       }
     };
     window.addEventListener("cinevo-remote", onRemote);
     return () => window.removeEventListener("cinevo-remote", onRemote);
-  });
+  }, []);
 
   useEffect(() => {
     if (!title) return;
@@ -634,7 +623,12 @@ export function Player() {
           onTimeUpdate={(e) => {
             const v = e.currentTarget;
             if (!v.duration) return;
-            setProgress(title.id, (v.currentTime / v.duration) * 100);
+            const value = (v.currentTime / v.duration) * 100;
+            if (timelineRef.current && document.activeElement !== timelineRef.current) {
+              timelineRef.current.value = String(value);
+            }
+            if (percentRef.current) percentRef.current.textContent = `${Math.round(value)}%`;
+            setProgress(title.id, value);
           }}
           onError={() => {
             if (!blob && !remoteSrc) return;
@@ -657,12 +651,16 @@ export function Player() {
           }}
           onEnded={() => {
             setProgress(title.id, 100);
+            if (upcoming) {
+              play(upcoming.id);
+              return;
+            }
             useCinevo.setState({ playing: false });
             setChrome(true);
           }}
         />
       ) : (
-        <img src={title.still || title.poster} alt="" className="absolute inset-0 h-full w-full object-cover" />
+        <img src={coverFor(title.title, title.accent, title.still || title.poster)} alt="" className="absolute inset-0 h-full w-full object-cover" />
       )}
       {file && ambience ? <div className="player-ambience" aria-hidden="true" /> : null}
       <BrandWatermark
@@ -753,7 +751,10 @@ export function Player() {
         aria-label="Close player"
         onClick={(e) => {
           e.stopPropagation();
+          const v = videoRef.current;
+          const at = v && v.duration ? (v.currentTime / v.duration) * 100 : null;
           stopPlay();
+          if (at != null) setProgress(title.id, at);
         }}
         className={`absolute right-4 top-4 z-10 flex size-11 items-center justify-center rounded-full border border-cine-line bg-cine-elevated/80 text-cine-text transition-opacity ${
           chrome ? "opacity-100" : "opacity-0"
@@ -913,13 +914,15 @@ export function Player() {
         ) : null}
         {file ? (
           <div className="flex items-center gap-3 font-mono text-xs text-cine-muted">
-            <span className="w-10 tabular-nums">{Math.round(progress)}%</span>
+            <span ref={percentRef} className="w-10 tabular-nums">{Math.round(progress)}%</span>
             <input
+              ref={timelineRef}
+              key={title.id}
               aria-label="Timeline"
               type="range"
               min={0}
               max={100}
-              value={progress}
+              defaultValue={progress}
               onChange={(e) => seek(Number(e.target.value))}
               className="h-1 flex-1 accent-cine-cyan"
             />
@@ -1043,15 +1046,6 @@ export function Player() {
                 </button>
                 <button
                   type="button"
-                  aria-pressed={onTv}
-                  aria-label={onTv ? "Playing on a TV" : "Play on a TV"}
-                  className={`flex size-11 items-center justify-center ${onTv ? "text-cine-cyan" : ""}`}
-                  onClick={onCast}
-                >
-                  <Cast size={18} />
-                </button>
-                <button
-                  type="button"
                   aria-label="Fullscreen"
                   className="flex size-11 items-center justify-center"
                   onClick={() => {
@@ -1065,6 +1059,15 @@ export function Player() {
                 </button>
               </>
             ) : null}
+            <button
+              type="button"
+              aria-pressed={onTv}
+              aria-label={onTv ? "Playing on a TV" : "Cast"}
+              className={`flex size-11 items-center justify-center ${onTv ? "text-cine-cyan" : ""}`}
+              onClick={() => openCast({ titleId: title.id })}
+            >
+              <Cast size={18} />
+            </button>
             <button type="button" className="h-11 px-3 font-ui text-sm font-bold text-cine-cyan" onClick={stopPlay}>
               Close
             </button>

@@ -1,11 +1,13 @@
-import { Bell, Clapperboard, Home, Library, Menu, Search, Settings2, Sparkles, Tv, Wrench, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Bell, Clapperboard, Home, Library, Menu, Play, Plus, Search, Server, Settings2, Share2, Sparkles, Tv, Wrench, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { paramFromRoom } from "@/lib/app-destination";
-import { useCinevo, type Room } from "@/lib/cinevo-store";
+import { useCinevo, progressBands, type Room } from "@/lib/cinevo-store";
 import type { LibSource } from "@/lib/library";
 import { isLoopbackUrl } from "@/lib/playback-urls";
 import { cn } from "@/lib/utils";
+import { useLibrary } from "@/lib/use-library";
+import { coverFor } from "@/lib/library";
 import { Onboarding } from "./onboarding";
 import { Logo } from "./logo";
 import { ArtworkSync } from "./artwork-sync";
@@ -41,6 +43,55 @@ function NetDot({ labeled = false }: { labeled?: boolean }) {
       <span className="net-dot" data-mode={mode} aria-hidden="true" />
       <span>{label}</span>
     </p>
+  );
+}
+
+function ServerButton({ onClick }: { onClick: () => void }) {
+  const sources = useCinevo((s) => s.sources);
+  const nodeUrl = useCinevo((s) => s.nodeUrl);
+  const nodeToken = useCinevo((s) => s.nodeToken);
+  const mode = networkMode(sources, nodeUrl, nodeToken);
+  const label = mode === "local" ? "On this device" : mode === "relay" ? "Remote server" : "Nothing connected";
+  return (
+    <button type="button" className="side-server" onClick={onClick}>
+      <Server size={18} />
+      <span>
+        <b>Server</b>
+        <small>
+          <i className="net-dot" data-mode={mode} aria-hidden="true" /> {label}
+        </small>
+      </span>
+    </button>
+  );
+}
+
+function NowInProgress() {
+  const library = useLibrary();
+  const play = useCinevo((s) => s.play);
+  const bands = useCinevo((s) => progressBands(s.progress));
+  const rows = useMemo(() => {
+    const progress = useCinevo.getState().progress;
+    return library
+      .filter((title) => {
+        const seen = progress[title.id];
+        return seen != null && seen > 0 && seen < 100;
+      })
+      .slice(0, 2);
+  }, [bands, library]);
+  return (
+    <div className="top-now" aria-label="Now in progress">
+      <span className="top-now__label">In progress</span>
+      {rows.length ? (
+        rows.map((title) => (
+          <button key={title.id} type="button" onClick={() => play(title.id)} title={title.title}>
+            <img src={coverFor(title.title, title.accent, title.poster)} alt="" />
+            <b>{title.title}</b>
+          </button>
+        ))
+      ) : (
+        <small>Nothing mid-watch</small>
+      )}
+    </div>
   );
 }
 
@@ -102,7 +153,8 @@ export function Shell({
   }, [hydrated, noteVisit]);
 
   useEffect(() => {
-    if (!NAV.some((item) => item.id === room)) setRoom("stage");
+    if (room === "browse" || NAV.some((item) => item.id === room)) return;
+    setRoom("stage");
   }, [room, setRoom]);
 
   useEffect(() => {
@@ -139,8 +191,12 @@ export function Shell({
       return;
     }
     let t = window.setTimeout(() => setNavHidden(true), 2800);
+    let last = 0;
     const poke = () => {
-      setNavHidden(false);
+      const now = performance.now();
+      if (now - last < 200) return;
+      last = now;
+      setNavHidden((hidden) => (hidden ? false : hidden));
       window.clearTimeout(t);
       t = window.setTimeout(() => setNavHidden(true), 2800);
     };
@@ -194,28 +250,26 @@ export function Shell({
               </button>
             );
           })}
-          <button
-            type="button"
-            className={cn(coreOpen && coreTab === "ai" && "is-on")}
-            aria-current={coreOpen && coreTab === "ai" ? "page" : undefined}
-            onClick={() => setCoreOpen(true, "ai")}
-          >
+        </nav>
+        <div className="side-rail__foot">
+          <p className="side-kicker">Quick</p>
+          <button type="button" onClick={() => go("sidebar")}>
+            <Plus size={18} />
+            Add library
+          </button>
+          <button type="button" className={cn(coreOpen && coreTab === "ai" && "is-on")} onClick={() => setCoreOpen(true, "ai")}>
             <Sparkles size={18} />
             Ask
           </button>
-        </nav>
-        <div className="side-rail__foot">
-          <button type="button" onClick={() => setCoreOpen(true, coreTab === "ai" ? "libraries" : undefined)}>
-            Core
+          <button type="button" onClick={() => setCoreOpen(true, "sharing")}>
+            <Share2 size={18} />
+            Sharing
           </button>
           <button type="button" onClick={() => setSettingsOpen(true)}>
             <Settings2 size={18} />
             Settings
           </button>
-          <NetDot labeled />
-          <a className="rail-credit" href="https://www.fourtee2.digital" target="_blank" rel="noreferrer">
-            CINEVO - a fourtee2digital project
-          </a>
+          <ServerButton onClick={() => go("sidebar")} />
         </div>
       </aside>
       <header className={cn("top-nav", navHidden && "is-hidden")}>
@@ -235,6 +289,7 @@ export function Shell({
             </button>
           ))}
         </nav>
+        <NowInProgress />
         <div className="top-nav__tools">
           <button
             type="button"
@@ -312,6 +367,7 @@ export function Shell({
             ) : null}
             <nav className="flex flex-col gap-1" aria-label="Main">
               <LibrarySwitch />
+              <NowInProgress />
               {NAV.map((item) => {
                 const Icon = item.icon;
                 return (
@@ -346,9 +402,36 @@ export function Shell({
               </button>
               <button
                 type="button"
-                className="flex h-11 w-full items-center rounded-md px-3 font-ui text-sm font-medium text-cine-muted"
+                className="flex h-11 w-full items-center gap-2 rounded-md px-3 font-ui text-sm font-medium text-cine-muted"
+                onClick={() => go("sidebar")}
+              >
+                <Plus size={18} />
+                Add library
+              </button>
+              <button
+                type="button"
+                className="flex h-11 w-full items-center gap-2 rounded-md px-3 font-ui text-sm font-medium text-cine-muted"
                 onClick={() => {
-                  setCoreOpen(true, coreTab === "ai" ? "libraries" : undefined);
+                  setCoreOpen(true, "sharing");
+                  setDrawer(false);
+                }}
+              >
+                <Share2 size={18} />
+                Sharing
+              </button>
+              <button
+                type="button"
+                className="flex h-11 w-full items-center gap-2 rounded-md px-3 font-ui text-sm font-medium text-cine-muted"
+                onClick={() => go("sidebar")}
+              >
+                <Server size={18} />
+                Server
+              </button>
+              <button
+                type="button"
+                className="flex h-11 w-full items-center gap-2 rounded-md px-3 font-ui text-sm font-medium text-cine-muted"
+                onClick={() => {
+                  setCoreOpen(true, "libraries");
                   setDrawer(false);
                 }}
               >

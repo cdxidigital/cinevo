@@ -11,6 +11,7 @@ import {
   Toast,
 } from "@/components/cinevo/overlays";
 import { Player } from "@/components/cinevo/player";
+import { CastSheet } from "@/components/cinevo/cast-sheet";
 import { Keys } from "@/components/cinevo/keys";
 import { RemoteBridge } from "@/components/cinevo/remote-bridge";
 import { Logo } from "@/components/cinevo/logo";
@@ -111,6 +112,7 @@ function Cinema() {
           <CoreModal />
           <NoticesOverlay />
           <Player />
+          <CastSheet />
           <Toast />
         </>
       }

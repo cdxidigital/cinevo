@@ -134,22 +134,19 @@ export async function signIn(
   // browsers when the opener is a cross-origin live-preview iframe.
   const popup = useOAuthPopup() ? openSignInPopup(providerId) : null;
 
-  // Clear any prior session so switching providers actually switches identity.
-  // Bounded because the popup is already open — a request that never settles
-  // would leave it hanging — but bounded PER ENVIRONMENT: only the server can
-  // end a deployed session, so cutting it short at the preview's 1.5s would
-  // start OAuth with the old session still live.
-  await runPreSignInSignOut({
-    livePreview: inLivePreview() || useOAuthPopup(),
-    hasBearer: Boolean(getBearerToken()),
-    requestSignOut: () => authClient.signOut(),
-    clearToken: () => setBearerToken(null),
-  });
-
   if (popup || useOAuthPopup()) {
     if (!popup) throw new Error("Pop-up blocked — allow pop-ups for sign-in");
     const result = await waitForPopupToken(popup);
+    if (result.cancelled) return;
     if (!result.token) throw new Error(readableOAuthError(result.error));
+    // The new session exists. Drop the previous one now, not before, so closing
+    // the window leaves the current account signed in.
+    await runPreSignInSignOut({
+      livePreview: inLivePreview() || useOAuthPopup(),
+      hasBearer: Boolean(getBearerToken()),
+      requestSignOut: () => authClient.signOut(),
+      clearToken: () => setBearerToken(null),
+    });
     setBearerToken(result.token);
     // Refresh the client session store with the bearer attached (onRequest).
     // Avoid a full iframe reload when we're already on the destination — that
@@ -207,29 +204,28 @@ function openSignInPopup(providerId: string): Window | null {
  * Wait for the popup's completion page to postMessage the session bearer (or
  * for the user to dismiss the popup).
  */
-function waitForPopupToken(popup: Window): Promise<{ token: string | null; error?: string }> {
+function waitForPopupToken(popup: Window): Promise<{ token: string | null; error?: string; cancelled?: boolean }> {
   return new Promise((resolve) => {
     const origin = window.location.origin;
     let settled = false;
     let closeTimer: number | undefined;
-    const settle = (token: string | null, error?: string) => {
+    const settle = (token: string | null, error?: string, cancelled?: boolean) => {
       if (settled) return;
       settled = true;
       cleanup();
-      resolve(error ? { token: null, error } : { token });
+      resolve(error ? { token: null, error } : { token, cancelled });
     };
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== origin) return;
       const data = event.data as PopupMessage | undefined;
       if (!data || data.source !== "grok-auth-popup") return;
-      settle(data.token ?? null, data.error);
+      const cancelled = !data.token && (!data.error || data.error === "1" || data.error === "access_denied");
+      settle(data.token ?? null, cancelled ? undefined : data.error, cancelled);
     };
-    // Fallback when the user dismisses the popup. Grace period lets the
-    // completion page's postMessage win over a racing `popup.closed`.
     const pollTimer = window.setInterval(() => {
       if (!popup.closed) return;
       window.clearInterval(pollTimer);
-      closeTimer = window.setTimeout(() => settle(null), 400);
+      closeTimer = window.setTimeout(() => settle(null, undefined, true), 400);
     }, 300);
     function cleanup() {
       window.clearInterval(pollTimer);

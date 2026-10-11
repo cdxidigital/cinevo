@@ -1,7 +1,8 @@
 import { Check, LayoutGrid, LayoutList, List, ListPlus, Play, Star } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { Title } from "@/lib/catalog";
+import { coverFor, isGenericArt } from "@/lib/library";
 import { useCinevo, type LibrarySort, type LibraryView } from "@/lib/cinevo-store";
 import { Mark } from "./logo";
 
@@ -9,10 +10,12 @@ export function ArtImage({
   src,
   fallback,
   className,
+  eager = false,
 }: {
   src?: string;
   fallback: string;
   className?: string;
+  eager?: boolean;
 }) {
   const [current, setCurrent] = useState(src || fallback);
   useEffect(() => setCurrent(src || fallback), [src, fallback]);
@@ -21,6 +24,8 @@ export function ArtImage({
       src={current}
       alt=""
       className={className}
+      loading={eager ? "eager" : "lazy"}
+      decoding="async"
       onError={() => {
         if (current !== fallback) setCurrent(fallback);
       }}
@@ -28,7 +33,7 @@ export function ArtImage({
   );
 }
 
-export function PosterCard({
+export const PosterCard = memo(function PosterCard({
   title,
   wide = false,
 }: {
@@ -41,9 +46,13 @@ export function PosterCard({
   const openTitle = useCinevo((s) => s.openTitle);
   const play = useCinevo((s) => s.play);
   const toggleFavorite = useCinevo((s) => s.toggleFavorite);
-  const art = wide ? title.still || title.poster : title.poster;
+  const stored = wide ? title.still || title.poster : title.poster;
+  const [art, setArt] = useState(stored && !isGenericArt(stored) ? stored : "");
   const [broken, setBroken] = useState(false);
-  useEffect(() => setBroken(false), [art]);
+  useEffect(() => {
+    setBroken(false);
+    setArt(coverFor(title.title, title.accent, stored));
+  }, [stored, title.accent, title.id, title.title]);
 
   return (
     <article className={cn("poster", wide && "poster--wide")}>
@@ -54,7 +63,13 @@ export function PosterCard({
               src={art}
               alt=""
               className={cn("w-full object-cover", wide ? "aspect-video" : "aspect-2/3")}
-              onError={() => setBroken(true)}
+              loading="lazy"
+              decoding="async"
+              onError={() => {
+                const made = coverFor(title.title, title.accent);
+                if (art === made) setBroken(true);
+                else setArt(made);
+              }}
             />
           ) : (
             <span className={cn("poster-fallback", wide && "is-wide")}>{title.title}</span>
@@ -116,7 +131,7 @@ export function PosterCard({
       )}
     </article>
   );
-}
+});
 
 export function Rail({
   heading,
@@ -163,14 +178,26 @@ const VIEWS: { id: LibraryView; label: string; icon: typeof LayoutGrid }[] = [
 const SORTS: { id: LibrarySort; label: string }[] = [
   { id: "title", label: "Title" },
   { id: "year", label: "Year" },
-  { id: "added", label: "Added" },
+  { id: "added", label: "Date added" },
+  { id: "rating", label: "Rating" },
+  { id: "runtime", label: "Duration" },
 ];
+
+function minutesOf(runtime: string) {
+  const hours = /(\d+)\s*h/i.exec(runtime);
+  const mins = /(\d+)\s*m/i.exec(runtime);
+  if (hours || mins) return (hours ? Number(hours[1]) * 60 : 0) + (mins ? Number(mins[1]) : 0);
+  const plain = Number.parseInt(runtime, 10);
+  return Number.isFinite(plain) ? plain : 0;
+}
 
 function sortTitles(titles: Title[], sort: LibrarySort) {
   const copy = [...titles];
   const byTitle = (a: Title, b: Title) => a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: "base" });
-  if (sort === "year") copy.sort((a, b) => (b.year || "").localeCompare(a.year || "") || byTitle(a, b));
+  if (sort === "year") copy.sort((a, b) => (Number.parseInt(b.year, 10) || 0) - (Number.parseInt(a.year, 10) || 0) || byTitle(a, b));
   else if (sort === "added") copy.sort((a, b) => (b.addedAt || "").localeCompare(a.addedAt || "") || byTitle(a, b));
+  else if (sort === "rating") copy.sort((a, b) => (b.rating || 0) - (a.rating || 0) || byTitle(a, b));
+  else if (sort === "runtime") copy.sort((a, b) => minutesOf(b.runtime) - minutesOf(a.runtime) || byTitle(a, b));
   else copy.sort(byTitle);
   return copy;
 }
@@ -196,33 +223,85 @@ function TitleActions({ title }: { title: Title }) {
   );
 }
 
+export function SeenBar({ id }: { id: string }) {
+  const seen = useCinevo((s) => s.progress[id]);
+  if (seen == null || seen <= 0) return null;
+  return (
+    <i className="library-progress">
+      <b style={{ width: `${Math.min(100, seen)}%` }} />
+    </i>
+  );
+}
+
 function Thumb({ title, className }: { title: Title; className?: string }) {
+  const stored = title.poster;
+  const [src, setSrc] = useState(stored && !isGenericArt(stored) ? stored : "");
   const [broken, setBroken] = useState(false);
-  useEffect(() => setBroken(false), [title.poster, title.id]);
-  if (!title.poster || broken) {
+  useEffect(() => {
+    setBroken(false);
+    setSrc(coverFor(title.title, title.accent, stored));
+  }, [stored, title.accent, title.id, title.title]);
+  if (!src || broken) {
     return <span className={cn("library-thumb library-thumb--empty", className)}>{title.title.slice(0, 1)}</span>;
   }
   return (
     <img
-      src={title.poster}
+      src={src}
       alt=""
       className={cn("library-thumb", className)}
-      onError={() => setBroken(true)}
+      loading="lazy"
+      decoding="async"
+      onError={() => {
+        const made = coverFor(title.title, title.accent);
+        if (src !== made) setSrc(made);
+        else setBroken(true);
+      }}
     />
   );
 }
 
-export function LibraryBoard({ titles, empty }: { titles: Title[]; empty?: string }) {
+export function CoverImg({
+  title,
+  poster,
+  accent = "violet",
+  className,
+}: {
+  title: string;
+  poster?: string;
+  accent?: Title["accent"];
+  className?: string;
+}) {
+  const [src, setSrc] = useState(poster && !isGenericArt(poster) ? poster : "");
+  useEffect(() => {
+    setSrc(coverFor(title, accent, poster));
+  }, [accent, poster, title]);
+  if (!src) return <span className={cn("poster-fallback", className)}>{title}</span>;
+  return (
+    <img
+      src={src}
+      alt=""
+      className={className}
+      loading="lazy"
+      decoding="async"
+      onError={() => {
+        const made = coverFor(title, accent);
+        if (src !== made) setSrc(made);
+      }}
+    />
+  );
+}
+
+export function LibraryBoard({ titles, empty, toolbar = true }: { titles: Title[]; empty?: string; toolbar?: boolean }) {
   const view = useCinevo((s) => s.prefs.libraryView);
   const sort = useCinevo((s) => s.prefs.librarySort);
   const patchPrefs = useCinevo((s) => s.patchPrefs);
   const openTitle = useCinevo((s) => s.openTitle);
-  const progress = useCinevo((s) => s.progress);
+
   const ordered = useMemo(() => sortTitles(titles, sort), [titles, sort]);
 
   return (
     <div className="library-board">
-      {titles.length ? (
+      {toolbar && titles.length ? (
         <div className="library-toolbar">
           <p>{titles.length === 1 ? "1 title" : `${titles.length} titles`}</p>
           <div className="library-toolbar__controls">
@@ -272,61 +351,47 @@ export function LibraryBoard({ titles, empty }: { titles: Title[]; empty?: strin
 
       {view === "list" ? (
         <div className="library-list">
-          {ordered.map((title) => {
-            const seen = progress[title.id];
-            return (
-              <article key={title.id} className="library-row">
-                <button type="button" className="library-row__open" onClick={() => openTitle(title.id)}>
-                  <Thumb title={title} />
-                  <span>
-                    <h3>{title.title}</h3>
-                    <p>
-                      {[title.year, title.kind === "series" ? "Series" : "Movie", title.genre, title.sourceLabel]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </p>
-                    {seen != null && seen > 0 ? (
-                      <i className="library-progress">
-                        <b style={{ width: `${Math.min(100, seen)}%` }} />
-                      </i>
-                    ) : null}
-                  </span>
-                </button>
-                <TitleActions title={title} />
-              </article>
-            );
-          })}
+          {ordered.map((title) => (
+            <article key={title.id} className="library-row">
+              <button type="button" className="library-row__open" onClick={() => openTitle(title.id)}>
+                <Thumb title={title} />
+                <span>
+                  <h3>{title.title}</h3>
+                  <p>
+                    {[title.year, title.kind === "series" ? "Series" : "Movie", title.genre, title.sourceLabel]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </p>
+                  <SeenBar id={title.id} />
+                </span>
+              </button>
+              <TitleActions title={title} />
+            </article>
+          ))}
         </div>
       ) : null}
 
       {view === "hybrid" ? (
         <div className="library-hybrid">
-          {ordered.map((title) => {
-            const seen = progress[title.id];
-            return (
-              <article key={title.id} className="library-card">
-                <button type="button" aria-label={`Open ${title.title}`} onClick={() => openTitle(title.id)}>
-                  <Thumb title={title} className="is-card" />
+          {ordered.map((title) => (
+            <article key={title.id} className="library-card">
+              <button type="button" aria-label={`Open ${title.title}`} onClick={() => openTitle(title.id)}>
+                <Thumb title={title} className="is-card" />
+              </button>
+              <div>
+                <button type="button" className="library-card__title" onClick={() => openTitle(title.id)}>
+                  <h3>{title.title}</h3>
                 </button>
-                <div>
-                  <button type="button" className="library-card__title" onClick={() => openTitle(title.id)}>
-                    <h3>{title.title}</h3>
-                  </button>
-                  <p>
-                    {[title.year, title.runtime, title.genre, title.sourceLabel].filter(Boolean).join(" · ")}
-                    {title.rating > 0 ? ` · ${title.rating.toFixed(1)}` : ""}
-                  </p>
-                  {title.synopsis ? <p className="library-card__synopsis">{title.synopsis}</p> : null}
-                  {seen != null && seen > 0 ? (
-                    <i className="library-progress">
-                      <b style={{ width: `${Math.min(100, seen)}%` }} />
-                    </i>
-                  ) : null}
-                  <TitleActions title={title} />
-                </div>
-              </article>
-            );
-          })}
+                <p>
+                  {[title.year, title.runtime, title.genre, title.sourceLabel].filter(Boolean).join(" · ")}
+                  {title.rating > 0 ? ` · ${title.rating.toFixed(1)}` : ""}
+                </p>
+                {title.synopsis ? <p className="library-card__synopsis">{title.synopsis}</p> : null}
+                <SeenBar id={title.id} />
+                <TitleActions title={title} />
+              </div>
+            </article>
+          ))}
         </div>
       ) : null}
 

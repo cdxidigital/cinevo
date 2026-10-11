@@ -50,8 +50,12 @@ export type MediaFacts = {
   genres: string[];
   cast: string[];
   director: string;
+  studio: string;
+  contentRating: string;
+  writers: string[];
   posterPath: string;
   stillPath: string;
+  showPosterPath: string;
 };
 
 export function factsFromPlex(raw: Record<string, unknown>, ratingKey: string): MediaFacts {
@@ -68,8 +72,12 @@ export function factsFromPlex(raw: Record<string, unknown>, ratingKey: string): 
     genres,
     cast: tags(raw.Role).slice(0, 8),
     director: tags(raw.Director)[0] || "",
+    studio: tags(raw.Studio)[0] || "",
+    contentRating: String(raw.contentRating || "").trim(),
+    writers: tags(raw.Writer).slice(0, 6),
     posterPath: thumb || "",
     stillPath: art || thumb || "",
+    showPosterPath: safeArtPath(String(raw.grandparentThumb || "")) || "",
   };
 }
 
@@ -84,6 +92,10 @@ export function factsFromJellyfin(item: {
   CommunityRating?: number;
   Genres?: string[];
   People?: JellyfinPerson[];
+  Studios?: Array<string | { Name?: string }>;
+  OfficialRating?: string;
+  SeriesId?: string;
+  SeriesPrimaryImageTag?: string;
   ImageTags?: { Primary?: string };
   BackdropImageTags?: string[];
 }): MediaFacts {
@@ -96,6 +108,19 @@ export function factsFromJellyfin(item: {
     .filter(Boolean)
     .slice(0, 8);
   const director = people.find((person) => /director/i.test(person.Type || ""));
+  const writers = people
+    .filter((person) => /writer/i.test(person.Type || ""))
+    .map((person) => String(person.Name || "").trim())
+    .filter(Boolean)
+    .slice(0, 6);
+  const studio = (item.Studios || [])
+    .map((entry) => (typeof entry === "string" ? entry : entry.Name || ""))
+    .map((entry) => entry.trim())
+    .find(Boolean);
+  const seriesPoster =
+    item.SeriesId && item.SeriesPrimaryImageTag
+      ? safeArtPath(`/Items/${item.SeriesId}/Images/Primary?maxWidth=480&quality=80`)
+      : null;
   const poster = id ? safeArtPath(`/Items/${id}/Images/Primary?maxWidth=480&quality=80`) : null;
   const still = id
     ? item.BackdropImageTags?.length
@@ -112,7 +137,11 @@ export function factsFromJellyfin(item: {
     genres,
     cast,
     director: String(director?.Name || "").trim(),
-    posterPath: item.ImageTags?.Primary ? poster || "" : poster || "",
+    studio: studio || "",
+    contentRating: String(item.OfficialRating || "").trim(),
+    writers,
+    posterPath: item.ImageTags?.Primary ? poster || "" : "",
     stillPath: still || "",
+    showPosterPath: seriesPoster || "",
   };
 }

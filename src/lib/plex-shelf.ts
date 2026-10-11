@@ -90,12 +90,15 @@ export function organizeLibrary(titles: Title[]) {
     }
     const first = rows[0]?.title;
     const year = rows.map((row) => row.title.year).find((item) => item && item !== "—") || "—";
+    const art = rows
+      .map((row) => row.title.showPoster || row.title.poster)
+      .find((item) => item && !item.includes("/stills/theater.jpg"));
     return {
       id: `show:${group.source}:${group.show.toLowerCase()}`,
       title: group.show,
       year,
-      poster: first?.poster || "",
-      still: first?.still || first?.poster || "",
+      poster: art || first?.poster || "",
+      still: first?.still || art || first?.poster || "",
       sourceLabel: group.source,
       episodes: rows.map((row) => row.title),
       seasons: [...seasons.entries()].map(([season, episodes]) => ({ season, episodes })),
@@ -130,4 +133,17 @@ export function nextEpisode(current: Title, titles: Title[]): Title | null {
   const index = show.episodes.findIndex((episode) => episode.id === current.id);
   if (index < 0) return null;
   return show.episodes[index + 1] ?? null;
+}
+
+export function sortShows(shows: PlexShow[], sort: "title" | "year" | "added" | "rating" | "runtime") {
+  const copy = [...shows];
+  const byTitle = (a: PlexShow, b: PlexShow) => a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: "base" });
+  const added = (show: PlexShow) => show.episodes.reduce((best, episode) => (episode.addedAt > best ? episode.addedAt : best), "");
+  const rating = (show: PlexShow) => show.episodes.reduce((best, episode) => Math.max(best, episode.rating || 0), 0);
+  if (sort === "year") copy.sort((a, b) => (Number.parseInt(b.year, 10) || 0) - (Number.parseInt(a.year, 10) || 0) || byTitle(a, b));
+  else if (sort === "added") copy.sort((a, b) => added(b).localeCompare(added(a)) || byTitle(a, b));
+  else if (sort === "rating") copy.sort((a, b) => rating(b) - rating(a) || byTitle(a, b));
+  else if (sort === "runtime") copy.sort((a, b) => b.episodes.length - a.episodes.length || byTitle(a, b));
+  else copy.sort(byTitle);
+  return copy;
 }

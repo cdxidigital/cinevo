@@ -114,18 +114,39 @@ function brandWindowsExe(exePath) {
     vi.setStringValues(
       { lang: 1033, codepage: 1200 },
       {
-        FileDescription: "CINEVO Node — private loopback companion",
-        ProductName: "CINEVO Node",
+        FileDescription: "CINEVO",
+        ProductName: "CINEVO",
         CompanyName: "CDXI",
         LegalCopyright: "CDXI. Distributed as a Fourtee2 Digital project.",
         OriginalFilename: "cinevo-node.exe",
-        InternalName: "cinevo-node",
+        InternalName: "CINEVO",
         FileVersion: VERSION,
         ProductVersion: VERSION,
+        Comments: "CINEVO server for this computer. It does not change other programs.",
       },
     );
     vi.outputToResourceEntries(res.entries);
   }
+  const manifest = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity type="win32" name="CINEVO" version="${VERSION}.0" processorArchitecture="amd64"/>
+  <description>CINEVO</description>
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+</assembly>`;
+  const kept = res.entries.filter((entry) => Number(entry.type) !== 24);
+  res.entries.length = 0;
+  res.entries.push(...kept, {
+    type: 24,
+    id: 1,
+    lang: 1033,
+    bin: Buffer.from(manifest, "utf8"),
+  });
   res.outputResource(exe);
   fs.writeFileSync(exePath, Buffer.from(exe.generate()));
   console.log("embedded CINEVO icon + version in", path.basename(exePath));
@@ -155,40 +176,42 @@ function signWindows(exePath) {
   const key = path.join(certDir, "cinevo-node.key");
   const crt = path.join(certDir, "cinevo-node.crt");
   const p12 = path.join(certDir, "cinevo-node.p12");
-  execFileSync("openssl", [
-    "req",
-    "-newkey",
-    "rsa:4096",
-    "-nodes",
-    "-keyout",
-    key,
-    "-x509",
-    "-days",
-    "1825",
-    "-sha256",
-    "-out",
-    crt,
-    "-subj",
-    "/CN=CINEVO Node/O=CINEVO/C=AU",
-    "-addext",
-    "extendedKeyUsage=codeSigning",
-    "-addext",
-    "keyUsage=digitalSignature",
-  ], { stdio: "inherit" });
-  execFileSync("openssl", [
-    "pkcs12",
-    "-export",
-    "-out",
-    p12,
-    "-inkey",
-    key,
-    "-in",
-    crt,
-    "-name",
-    "cinevo",
-    "-passout",
-    "pass:cinevo-node",
-  ], { stdio: "inherit" });
+  if (!fs.existsSync(p12) || !fs.existsSync(crt) || !fs.existsSync(key)) {
+    execFileSync("openssl", [
+      "req",
+      "-newkey",
+      "rsa:4096",
+      "-nodes",
+      "-keyout",
+      key,
+      "-x509",
+      "-days",
+      "1825",
+      "-sha256",
+      "-out",
+      crt,
+      "-subj",
+      "/CN=CINEVO/O=CDXI/OU=Fourtee2 Digital/C=AU",
+      "-addext",
+      "extendedKeyUsage=codeSigning",
+      "-addext",
+      "keyUsage=digitalSignature",
+    ], { stdio: "inherit" });
+    execFileSync("openssl", [
+      "pkcs12",
+      "-export",
+      "-out",
+      p12,
+      "-inkey",
+      key,
+      "-in",
+      crt,
+      "-name",
+      "cinevo",
+      "-passout",
+      "pass:cinevo-node",
+    ], { stdio: "inherit" });
+  }
   const jar = ensureJsign();
   const args = [
     "-jar",
@@ -201,10 +224,12 @@ function signWindows(exePath) {
     "cinevo-node",
     "--storetype",
     "PKCS12",
+    "--alg",
+    "SHA-256",
     "--name",
-    "CINEVO Node",
+    "CINEVO",
     "--url",
-    "https://cinevo.app",
+    "https://www.fourtee2.digital",
     exePath,
   ];
   const signed = spawnSync("java", args, { stdio: "inherit" });
@@ -254,9 +279,11 @@ const WIN_README = `CINEVO Node for Windows (x64)
 Loopback-only companion. Binds 127.0.0.1:48184. Never forwards ports.
 Never streams media. Plex / Jellyfin tokens stay on this PC.
 
-The executable carries the CINEVO icon and an Authenticode signature
-issued as "CINEVO Node". Windows SmartScreen may still prompt until an
-EV certificate from a public CA is used in production.
+The executable is named CINEVO in Windows, carries the CINEVO icon, and is
+signed with the same CINEVO certificate on every build. It does not ask for
+administrator rights. SmartScreen can still show one warning the first time,
+because the certificate is not from a paid public CA. That warning is not a
+virus detection. Choose "More info", then "Run anyway".
 
 Install
   Double-click "Install CINEVO Node.bat"
@@ -442,6 +469,19 @@ else
   fi
   echo "Installed for $(id -un) at $DEST"
 fi
+DESKTOP_DIR="\${XDG_DATA_HOME:-\$HOME/.local/share}/applications"
+mkdir -p "\$DESKTOP_DIR" 2>/dev/null || true
+cat > "\$DESKTOP_DIR/CINEVO.desktop" << EOF
+[Desktop Entry]
+Type=Application
+Name=CINEVO
+GenericName=CINEVO Server
+Comment=CINEVO server for this computer. A CDXI app, distributed as a Fourtee2 Digital project.
+Exec=\$DEST/cinevo-node --no-open
+Icon=\$DEST/icon.png
+Terminal=false
+Categories=AudioVideo;Network;
+EOF
 echo "Dashboard: http://THIS-MACHINE:48184"
 echo "Pair that code in CINEVO. Do not port-forward 48184."
 `;
@@ -456,6 +496,14 @@ function wrapLinux(binary) {
   write(path.join(dir, "install.sh"), LINUX_INSTALL, 0o755);
   write(path.join(dir, "README.txt"), LINUX_README);
   return dir;
+}
+
+if (process.argv[2] === "--sign-exe") {
+  const exePath = process.argv[3];
+  if (!exePath) throw new Error("usage: node pack.mjs --sign-exe <cinevo-node.exe>");
+  brandWindowsExe(exePath);
+  signWindows(exePath);
+  process.exit(0);
 }
 
 console.log("Packaging CINEVO Node executables…");

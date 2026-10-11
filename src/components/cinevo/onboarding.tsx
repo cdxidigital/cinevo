@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { houseRank, houseStamps } from "@/lib/house-card";
 import { organizeLibrary } from "@/lib/plex-shelf";
-import { useCinevo } from "@/lib/cinevo-store";
+import { progressBands, useCinevo } from "@/lib/cinevo-store";
 
 const STEPS = [
   {
@@ -71,11 +71,12 @@ export function HouseCard() {
   const sources = useCinevo((s) => s.sources.length);
   const plays = useCinevo((s) => s.plays.length);
   const saved = useCinevo((s) => s.favorites.length);
-  const progress = useCinevo((s) => s.progress);
+  const bands = useCinevo((s) => progressBands(s.progress));
   const local = useCinevo((s) => s.localTitles);
   const remote = useCinevo((s) => s.remoteTitles);
   const [open, setOpen] = useState(false);
   const stamps = useMemo(() => {
+    const progress = useCinevo.getState().progress;
     const shelf = organizeLibrary([...local, ...remote]);
     const finishedFilms = shelf.movies.filter((title) => (progress[title.id] ?? 0) >= 90).length;
     const finishedEpisodes = shelf.shows.flatMap((show) => show.episodes).filter((title) => (progress[title.id] ?? 0) >= 90).length;
@@ -89,7 +90,7 @@ export function HouseCard() {
       visits: house.visits,
       today: new Date().toISOString().slice(0, 10),
     });
-  }, [house.onboarded, house.visits, sources, plays, saved, progress, local, remote]);
+  }, [bands, house.onboarded, house.visits, sources, plays, saved, local, remote]);
   const earned = stamps.filter((stamp) => stamp.earned);
   const rank = houseRank(earned.length);
   return (

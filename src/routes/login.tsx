@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { GROK_PROVIDERS, authClient, authEnabled, getBearerToken, rememberSessionToken, sessionTokenFromAuthResponse, signIn } from "@/lib/auth/client";
 import { Logo } from "@/components/cinevo/logo";
-import { PasskeyLogin } from "@/components/cinevo/passkey-login";
+import { PasskeyCeremony, PasskeyLogin } from "@/components/cinevo/passkey-login";
 import { claimUsername, suggestUsername } from "@/lib/sharing";
 import { appDestination } from "@/lib/app-destination";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
@@ -11,7 +11,12 @@ export const Route = createFileRoute("/login")({
   validateSearch: (search: Record<string, unknown>) => ({
     mode: search.mode === "up" ? ("up" as const) : ("in" as const),
     ...(typeof search.desk === "string" && /^[A-Za-z0-9_-]{20,80}$/.test(search.desk) ? { desk: search.desk } : {}),
-    ...(typeof search.error === "string" && search.error ? { error: search.error } : {}),
+    ...(typeof search.error === "string" && search.error && search.error !== "1" && search.error !== "access_denied"
+      ? { error: search.error }
+      : {}),
+    ...(typeof search.ceremony === "string" && search.ceremony === "passkey" && typeof search.id === "string"
+      ? { ceremony: "passkey" as const, id: search.id }
+      : {}),
     ...appDestination(search),
   }),
   component: Login,
@@ -33,7 +38,7 @@ function deskFromLocation() {
 }
 
 function Login() {
-  const { mode: initial, room, core, desk, error: oauthError } = Route.useSearch();
+  const { mode: initial, room, core, desk, error: oauthError, ceremony, id } = Route.useSearch();
   const { user, isPending } = useCurrentUserState();
   const [mode, setMode] = useState<"in" | "up">(initial);
   const [email, setEmail] = useState("");
@@ -47,7 +52,7 @@ function Login() {
   }, [initial]);
 
   useEffect(() => {
-    if (!oauthError) return;
+    if (!oauthError || oauthError === "1" || oauthError === "access_denied") return;
     setError("Google or X did not finish signing in. Try again, or use a passkey.");
   }, [oauthError]);
 
@@ -113,13 +118,31 @@ function Login() {
     goHouse();
   };
 
+  const confirmSession = async (token: string | null) => {
+    const headers = new Headers();
+    if (token) headers.set("authorization", `Bearer ${token}`);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const res = await fetch("/api/auth/get-session", { credentials: "include", headers, cache: "no-store" });
+        const body = (await res.json().catch(() => null)) as { user?: { id?: string } } | null;
+        if (res.ok && body?.user?.id) return true;
+      } catch {
+        /* try once more */
+      }
+      if (attempt === 0) await new Promise((resolve) => window.setTimeout(resolve, 250));
+    }
+    return false;
+  };
+
   const enterHouse = async (token: string | null, name: string) => {
-    if (token) rememberSessionToken(sessionTokenFromAuthResponse(token));
-    const session = await authClient.getSession();
-    if (!session.data?.user) return false;
+    const signed = sessionTokenFromAuthResponse(token);
+    if (signed) rememberSessionToken(signed);
+    const kept = await confirmSession(signed);
+    if (!kept) return false;
+    void authClient.getSession();
     const secret = desk || deskFromLocation();
     if (secret) {
-      const bearer = getBearerToken() || token;
+      const bearer = getBearerToken() || signed;
       try {
         const approved = await fetch("/api/passkey", {
           method: "POST",
@@ -159,6 +182,7 @@ function Login() {
       return;
     }
     setPending(true);
+    rememberSessionToken(null);
     let captured: string | null = null;
     const fetchOptions = {
       onSuccess(context: { response: Response }) {
@@ -179,7 +203,7 @@ function Login() {
           return;
         }
         rememberSessionToken(captured || (data && "token" in data ? String(data.token ?? "") : null) || null);
-        const kept = await enterHouse(captured, username);
+        const kept = await enterHouse(captured || (data && "token" in data ? String(data.token ?? "") : null), username);
         if (!kept) {
           setError("The account was created, but this browser did not keep the sign-in. Try signing in.");
           setMode("in");
@@ -195,7 +219,7 @@ function Login() {
           return;
         }
         rememberSessionToken(captured || (data && "token" in data ? String(data.token ?? "") : null) || null);
-        const kept = await enterHouse(captured, "");
+        const kept = await enterHouse(captured || (data && "token" in data ? String(data.token ?? "") : null), "");
         if (!kept) setError("The password matched, but this browser did not keep the sign-in. Reload and try again.");
       }
     } catch (caught) {
@@ -204,6 +228,8 @@ function Login() {
       setPending(false);
     }
   };
+
+  if (ceremony === "passkey" && id) return <PasskeyCeremony id={id} />;
 
   if (isPending || signedIn) {
     return (
@@ -294,7 +320,7 @@ function Login() {
                 required
                 minLength={8}
                 aria-label="Password"
-                className="h-12 rounded-xl border border-cine-border bg-cine-well px-4 font-ui"
+                className="login-field"
               />
               {mode === "up" ? <p className="login-hint">Password at least 8 characters. Username is optional.</p> : null}
               <button type="submit" disabled={pending} className="house-btn house-btn--ghost h-12 w-full">
@@ -335,9 +361,11 @@ function Login() {
         )}
       </div>
       <p className="login-credit">
+        CINEVO - a{" "}
         <a href="https://www.fourtee2.digital" target="_blank" rel="noreferrer">
-          CINEVO - a fourtee2digital project
-        </a>
+          fourtee2digital
+        </a>{" "}
+        project
       </p>
     </main>
   );

@@ -12,6 +12,10 @@ export type Title = {
   synopsis: string;
   cast: string[];
   director: string;
+  studio?: string;
+  contentRating?: string;
+  writers?: string[];
+  showPoster?: string;
   rating: number;
   addedAt: string;
   poster: string;
@@ -58,7 +62,28 @@ export function filterCatalog(opts: {
   return (opts.pool ?? CATALOG).filter((t) => {
     const cast = t.cast ?? [];
     const genres = t.genres ?? [];
-    const hay = `${t.title} ${t.synopsis} ${t.genre} ${cast.join(" ")} ${t.director}`.toLowerCase();
+    const writers = t.writers ?? [];
+    const file = [t.folder, t.path].filter(Boolean).join(" ");
+    const hay = [
+      t.title,
+      t.synopsis,
+      t.genre,
+      genres.join(" "),
+      cast.join(" "),
+      writers.join(" "),
+      t.director,
+      t.studio,
+      t.contentRating,
+      t.year,
+      t.runtime,
+      t.source,
+      t.sourceLabel,
+      file,
+      t.rating ? String(t.rating) : "",
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
     if (q && !hay.includes(q)) return false;
     if (opts.kind && opts.kind !== "all" && t.kind !== opts.kind) return false;
     if (opts.genre && opts.genre !== "All" && !genres.includes(opts.genre)) return false;

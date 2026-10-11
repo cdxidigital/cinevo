@@ -219,17 +219,19 @@ function Home() {
           <Logo size="lg" layout="stacked" />
         </Link>
         <div>
-          <p className="public-footer__credit">
-            <a href="https://www.fourtee2.digital" target="_blank" rel="noreferrer">
-              CINEVO - a fourtee2digital project
-            </a>
-          </p>
           <nav className="public-footer__links" aria-label="More">
             <Link to="/node">Server</Link>
             <Link to="/help">Help</Link>
             <Link to="/legal/privacy">Privacy</Link>
             <Link to="/legal/terms">Terms</Link>
           </nav>
+          <p className="public-footer__credit">
+            CINEVO - a{" "}
+            <a href="https://www.fourtee2.digital" target="_blank" rel="noreferrer">
+              fourtee2digital
+            </a>{" "}
+            project
+          </p>
         </div>
         <EnterHouse className="public-footer__enter" label="Enter CINEVO" />
       </footer>

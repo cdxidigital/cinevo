@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { approveDesk, loginPasskey, newChallenge, openDesk, readDesk, registerPasskey } from "@/lib/passkey.server";
-import { pageOrigin, passkeyHostError } from "@/lib/passkey-crypto";
+import { pageOrigin } from "@/lib/passkey-crypto";
 
 function json(body: unknown, status = 200, cookie?: string) {
   const headers = new Headers({ "content-type": "application/json", "cache-control": "no-store" });
@@ -24,11 +24,6 @@ export const Route = createFileRoute("/api/passkey")({
           body = (await request.json()) as Record<string, string>;
         } catch {
           return json({ error: "Missing request." }, 400);
-        }
-        const webauthn = body.action === "challenge" || body.action === "register" || body.action === "login";
-        if (webauthn) {
-          const hostError = passkeyHostError(where.rpId);
-          if (hostError) return json({ error: hostError }, 400);
         }
         try {
           if (body.action === "challenge") {

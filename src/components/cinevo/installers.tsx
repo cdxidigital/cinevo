@@ -34,7 +34,7 @@ const PHONE_APPS = [
     id: "android",
     kicker: "Android",
     title: "CINEVO 2.0",
-    detail: "A sideload APK. Enter your house and watch on the phone. No store account. The server stays on the computer.",
+    detail: "The phone player. Watch on the phone, cast to a TV, or send the title to a CINEVO Server. Sideload. No store account.",
     href: "/installers/CINEVO.apk",
     download: true,
     action: "Download APK",

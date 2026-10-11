@@ -23,13 +23,14 @@ import zipfile
 zipfile.ZipFile("$WORK/base.apk", "a").write("$WORK/classes.dex", "classes.dex")
 PY
 "$BT/zipalign" -p -f 4 "$WORK/base.apk" "$WORK/aligned.apk"
-KEYSTORE="$ROOT/cinevo-remote.jks"
+KEYSTORE="$ROOT/cinevo.jks"
 if [[ ! -f "$KEYSTORE" ]]; then
-  keytool -genkeypair -keystore "$KEYSTORE" -storepass cinevo-remote -keypass cinevo-remote \
+  keytool -genkeypair -keystore "$KEYSTORE" -storepass cinevo -keypass cinevo \
     -alias cinevo -keyalg RSA -keysize 2048 -validity 3650 \
-    -dname "CN=CINEVO Remote, O=CINEVO, C=AU"
+    -dname "CN=CINEVO, OU=Fourtee2 Digital, O=CDXI, C=AU"
 fi
-"$BT/apksigner" sign --ks "$KEYSTORE" --ks-pass pass:cinevo-remote --key-pass pass:cinevo-remote \
+"$BT/apksigner" sign --ks "$KEYSTORE" --ks-pass pass:cinevo --key-pass pass:cinevo \
+  --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
   --out "$OUT" "$WORK/aligned.apk"
 "$BT/apksigner" verify --verbose "$OUT"
 cp -f "$OUT" "$ROOT/../../public/installers/CINEVO-Remote.apk"

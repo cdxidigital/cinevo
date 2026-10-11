@@ -1,19 +1,20 @@
 import { cn } from "@/lib/utils";
 
-/** Official CINEVO play-crystal (Logo Kit v1.0). Do not recolor, rotate, or stroke. */
+/** Official mark. Facet colours stay fixed. */
 const FACETS = [
-  { d: "80.32,51.04 80.32,460.96 207.2,260.88", fill: "#FF4DA5" },
-  { d: "80.32,460.96 451.2,256 207.2,260.88", fill: "#FF9F1C" },
-  { d: "80.32,51.04 295.4304,169.9168 207.2,260.88", fill: "#8B2FFF" },
-  { d: "295.4304,169.9168 451.2,256 207.2,260.88", fill: "#55CFFF" },
-  { d: "391.8592,223.2064 451.2,256 391.8592,288.7936", fill: "#C8F0FF" },
+  { points: "96,45 96,112 130,112", fill: "#FF4DA5" },
+  { points: "96,45 150,78 130,112", fill: "#8B2FFF" },
+  { points: "150,78 205,110 130,112", fill: "#55CFFF" },
+  { points: "205,110 150,146 130,112", fill: "#3F8CFF" },
+  { points: "150,146 96,180 130,112", fill: "#FF9F1C" },
+  { points: "96,112 96,180 130,112", fill: "#A63DE8" },
 ];
 
 export function Mark({ className }: { className?: string }) {
   return (
-    <svg viewBox="0 0 512 512" className={cn("brand__gem", className)} aria-hidden="true">
-      {FACETS.map((f) => (
-        <polygon key={f.fill} points={f.d} fill={f.fill} />
+    <svg viewBox="86 35 129 155" className={cn("brand__gem", className)} aria-hidden="true">
+      {FACETS.map((facet) => (
+        <polygon key={facet.fill} points={facet.points} fill={facet.fill} />
       ))}
     </svg>
   );

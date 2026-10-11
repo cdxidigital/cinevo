@@ -16,7 +16,7 @@ import {
 export type Room = "stage" | "browse" | "movies" | "shows" | "sidebar" | "tools";
 
 export type LibraryView = "grid" | "list" | "hybrid";
-export type LibrarySort = "title" | "year" | "added";
+export type LibrarySort = "title" | "year" | "added" | "rating" | "runtime";
 
 export type Preferences = {
   nightMode: boolean;
@@ -87,6 +87,7 @@ type CinevoState = {
   party: Party;
   mood: Mood;
   searchOpen: boolean;
+  libraryQuery: string;
   settingsOpen: boolean;
   coreOpen: boolean;
   coreTab: CoreTab;
@@ -133,6 +134,7 @@ type CinevoState = {
   setMood: (mood: Mood) => void;
   shufflePlay: () => void;
   setSearchOpen: (open: boolean) => void;
+  setLibraryQuery: (query: string) => void;
   setSettingsOpen: (open: boolean) => void;
   setCoreOpen: (open: boolean, tab?: CoreTab) => void;
   setCoreTab: (tab: CoreTab) => void;
@@ -180,6 +182,10 @@ type CinevoState = {
       genres?: string[];
       cast?: string[];
       director?: string;
+      studio?: string;
+      contentRating?: string;
+      writers?: string[];
+      showPoster?: string;
     }[],
   ) => void;
   addMarker: (titleId: string, at: number, label: string) => void;
@@ -287,11 +293,101 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number)
   return Math.min(max, Math.max(min, n));
 }
 
+let localSnap: LibraryTitle[] | undefined;
+let localSlim: LibraryTitle[] | undefined;
+let remoteSnap: LibraryTitle[] | undefined;
+let remoteSlim: LibraryTitle[] | undefined;
+
+function slimLocal(titles: LibraryTitle[]) {
+  if (titles === localSnap && localSlim) return localSlim;
+  localSnap = titles;
+  localSlim = titles.map((t) => ({
+    ...t,
+    poster: t.poster?.startsWith("data:") ? "" : t.poster,
+    still: t.still?.startsWith("data:") ? "" : t.still,
+    showPoster: t.showPoster?.startsWith("data:") ? "" : t.showPoster,
+  }));
+  return localSlim;
+}
+
+function slimRemote(titles: LibraryTitle[]) {
+  if (titles === remoteSnap && remoteSlim) return remoteSlim;
+  remoteSnap = titles;
+  remoteSlim = titles.map((t) => ({
+    ...t,
+    poster: t.poster?.startsWith("data:") ? "" : t.poster,
+    still: t.still?.startsWith("data:") ? "" : t.still,
+    showPoster: t.showPoster?.startsWith("data:") ? "" : t.showPoster,
+  }));
+  return remoteSlim;
+}
+
+/** Changes only when a title starts, passes 90%, or finishes. Playback ticks stay off this. */
+export function progressBands(progress: Record<string, number>) {
+  const parts: string[] = [];
+  for (const id in progress) {
+    const value = progress[id] ?? 0;
+    if (value <= 0) continue;
+    parts.push(`${id}:${value >= 100 ? "d" : value >= 90 ? "f" : "w"}`);
+  }
+  parts.sort();
+  return parts.join("|");
+}
+function houseStorage() {
+  let timer = 0;
+  let pending: { name: string; value: unknown } | null = null;
+  const write = () => {
+    if (!pending || typeof localStorage === "undefined") return;
+    const item = pending;
+    pending = null;
+    try {
+      localStorage.setItem(item.name, JSON.stringify(item.value));
+    } catch {
+      /* private mode or a full disk */
+    }
+  };
+  const flush = () => {
+    if (typeof window !== "undefined") window.clearTimeout(timer);
+    timer = 0;
+    write();
+  };
+  if (typeof window !== "undefined") {
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") flush();
+    });
+  }
+  return {
+    getItem: (name: string) => {
+      if (typeof localStorage === "undefined") return null;
+      const raw = localStorage.getItem(name);
+      if (!raw) return null;
+      try {
+        return JSON.parse(raw) as { state: unknown; version?: number };
+      } catch {
+        return null;
+      }
+    },
+    setItem: (name: string, value: unknown) => {
+      if (typeof window === "undefined") return;
+      pending = { name, value };
+      window.clearTimeout(timer);
+      timer = window.setTimeout(flush, 1000);
+    },
+    removeItem: (name: string) => {
+      pending = null;
+      if (typeof localStorage === "undefined") return;
+      localStorage.removeItem(name);
+    },
+  };
+}
+
 export const useCinevo = create<CinevoState>()(
   persist(
     (set, get) => ({
       room: "stage",
       searchOpen: false,
+      libraryQuery: "",
       settingsOpen: false,
       coreOpen: false,
       coreTab: "libraries",
@@ -335,8 +431,14 @@ export const useCinevo = create<CinevoState>()(
         }
         set({ playing: !get().playing });
       },
-      setProgress: (id, value) =>
-        set({ progress: { ...get().progress, [id]: Math.max(0, Math.min(100, value)) } }),
+      setProgress: (id, value) => {
+        const next = Math.round(Math.max(0, Math.min(100, value)) * 10) / 10;
+        const prev = get().progress[id];
+        if (prev === next) return;
+        const live = get().playing && get().playingId === id && next > 0 && next < 100;
+        if (live && prev != null && Math.abs(prev - next) < 0.35) return;
+        set({ progress: { ...get().progress, [id]: next } });
+      },
       toggleFavorite: (id) => {
         const has = get().favorites.includes(id);
         set({
@@ -388,6 +490,7 @@ export const useCinevo = create<CinevoState>()(
         else get().flash("Add a library first");
       },
       setSearchOpen: (searchOpen) => set({ searchOpen }),
+      setLibraryQuery: (libraryQuery) => set({ libraryQuery }),
       setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
       setCoreOpen: (coreOpen, tab) => set({ coreOpen, coreTab: tab ?? get().coreTab }),
       setCoreTab: (coreTab) => set({ coreTab }),
@@ -617,6 +720,10 @@ export const useCinevo = create<CinevoState>()(
             genres: patch.genres?.length ? patch.genres : (title as { genres?: string[] }).genres,
             cast: patch.cast?.length ? patch.cast : (title as { cast?: string[] }).cast,
             director: patch.director || (title as { director?: string }).director,
+            studio: patch.studio || (title as { studio?: string }).studio,
+            contentRating: patch.contentRating || (title as { contentRating?: string }).contentRating,
+            writers: patch.writers?.length ? patch.writers : (title as { writers?: string[] }).writers,
+            showPoster: patch.showPoster || (title as { showPoster?: string }).showPoster,
           };
         };
         set({
@@ -672,6 +779,7 @@ export const useCinevo = create<CinevoState>()(
     {
       name: "cinevo-local-v4",
       skipHydration: true,
+      storage: houseStorage(),
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<CinevoState>;
         const theme = migrateTheme(p.prefs?.theme);
@@ -741,7 +849,9 @@ export const useCinevo = create<CinevoState>()(
             introSkip: clampNumber(p.prefs?.introSkip, 0, 180, 0),
             subtitleOffset: clampNumber(p.prefs?.subtitleOffset, -15, 15, 0),
             libraryView: p.prefs?.libraryView === "list" || p.prefs?.libraryView === "hybrid" ? p.prefs.libraryView : "grid",
-            librarySort: p.prefs?.librarySort === "year" || p.prefs?.librarySort === "added" ? p.prefs.librarySort : "title",
+            librarySort: (["year", "added", "rating", "runtime"] as const).includes(p.prefs?.librarySort as "year")
+              ? (p.prefs?.librarySort as LibrarySort)
+              : "title",
             mix: mixMode(p.prefs?.mix),
             ambience: p.prefs?.ambience !== false,
             denoise: p.prefs?.denoise !== false,
@@ -772,15 +882,8 @@ export const useCinevo = create<CinevoState>()(
         plexServers: s.plexServers,
         libraryOwner: s.libraryOwner,
         sources: s.sources,
-        localTitles: s.localTitles.map((t) => ({
-          ...t,
-          poster: t.poster?.startsWith("data:") ? "" : t.poster,
-        })),
-        remoteTitles: s.remoteTitles.map((t) => ({
-          ...t,
-          poster: t.poster?.startsWith("data:") ? "" : t.poster,
-          still: t.still?.startsWith("data:") ? "" : t.still,
-        })),
+        localTitles: slimLocal(s.localTitles),
+        remoteTitles: slimRemote(s.remoteTitles),
         sourceFilter: s.sourceFilter,
         activeSourceId: s.activeSourceId,
         collections: s.collections,

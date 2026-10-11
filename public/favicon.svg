@@ -1,16 +1,17 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
   <defs>
-    <linearGradient id="n" x1="0" x2="0" y1="0" y2="1">
-      <stop offset="0" stop-color="#2A1258"/>
-      <stop offset="1" stop-color="#16082E"/>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#22182e"/>
+      <stop offset="1" stop-color="#3a1258"/>
     </linearGradient>
   </defs>
-  <rect width="32" height="32" rx="7" fill="url(#n)"/>
-  <g transform="matrix(0.03672 0 0 0.03672 6.6 6.6)">
-    <polygon fill="#FF4DA5" points="80.32,51.04 80.32,460.96 207.2,260.88"/>
-    <polygon fill="#FF9F1C" points="80.32,460.96 451.2,256 207.2,260.88"/>
-    <polygon fill="#8B2FFF" points="80.32,51.04 295.4304,169.9168 207.2,260.88"/>
-    <polygon fill="#55CFFF" points="295.4304,169.9168 451.2,256 207.2,260.88"/>
-    <polygon fill="#C8F0FF" points="391.8592,223.2064 451.2,256 391.8592,288.7936"/>
-  </g>
+  <rect width="96" height="96" rx="22" fill="url(#tile)"/>
+  <svg x="18" y="16" width="60" height="64" viewBox="86 35 129 155">
+    <polygon points="96,45 96,112 130,112" fill="#FF4DA5"/>
+    <polygon points="96,45 150,78 130,112" fill="#8B2FFF"/>
+    <polygon points="150,78 205,110 130,112" fill="#55CFFF"/>
+    <polygon points="205,110 150,146 130,112" fill="#3F8CFF"/>
+    <polygon points="150,146 96,180 130,112" fill="#FF9F1C"/>
+    <polygon points="96,112 96,180 130,112" fill="#A63DE8"/>
+  </svg>
 </svg>

@@ -65,6 +65,10 @@ export function Keys() {
         }
       }
       if (e.key === "Escape") {
+        if (!s.house.onboarded) {
+          s.finishOnboarding();
+          return;
+        }
         if (s.searchOpen) s.setSearchOpen(false);
         else if (s.settingsOpen) s.setSettingsOpen(false);
         else if (s.coreOpen) s.setCoreOpen(false);

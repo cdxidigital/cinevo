@@ -81,7 +81,7 @@ function CastNode() {
   return (
     <section className="remote-join glass-strong">
       <h2>Cast to a server</h2>
-      <p>Windows, Mac, Linux, and NAS. Open the receiver on that computer and use the cast code.</p>
+      <p>The Cast button in the player, on a title, and in the Android app uses this same server and code.</p>
       <form onSubmit={(event) => void load(event)}>
         <label>
           Server

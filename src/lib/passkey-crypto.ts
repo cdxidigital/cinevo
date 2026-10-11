@@ -58,10 +58,11 @@ function isIpHost(hostname: string) {
   return hostname.includes(":") || /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname);
 }
 
-/** Browser passkeys reject an IP address as the relying party. localhost is fine. */
-export function passkeyHostError(hostname: string): string | null {
-  if (!isIpHost(hostname)) return null;
-  return "Passkeys do not work on an IP address. Open this house at localhost, or at its domain.";
+export { isIpHost };
+
+/** Platform passkeys reject an IP relying party. This house uses a browser key there instead. */
+export function passkeyHostError(_hostname: string): string | null {
+  return null;
 }
 
 export function pageOrigin(request: Request): { origin: string; rpId: string } | null {

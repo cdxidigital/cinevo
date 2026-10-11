@@ -54,33 +54,10 @@ function placeholderCardColor(site = {}) {
   return /^[0-9a-fA-F]{6}$/.test(hex) ? hex : "";
 }
 
-function brandedName() {
-  try {
-    const site = JSON.parse(readFileSync(join(process.cwd(), OG_SITE_REL_PATH), "utf8"));
-    const title = String(site.title ?? "").trim();
-    if (title && title !== DEFAULT_APP_NAME) return title.slice(0, 40);
-  } catch {
-    /* a missing site title falls back to the platform default */
-  }
-  return "";
-}
-
-function publishedName(host) {
-  if (!host.endsWith(".grok.me")) return "";
-  const slug = host.split(".")[0] ?? "";
-  if (!slug || slug === "www" || !/^[a-z0-9-]{1,63}$/.test(slug)) return "";
-  return (
-    slug
-      .split("-")
-      .filter(Boolean)
-      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-      .join(" ")
-  );
-}
-
 /**
- * "wild-race.grok.me" → "Wild Race". Preview and local hosts use the site
- * title (CINEVO), never the platform placeholder.
+ * "wild-race.grok.me" → "Wild Race". Only published app hosts encode the
+ * display name in the first label. Preview / guest hosts are image origins
+ * only — slugifying them produced internal names like "Hds Abc 3000 Xy".
  */
 export function appNameFromHost(hostHeader) {
   const host = String(hostHeader ?? "")
@@ -88,7 +65,20 @@ export function appNameFromHost(hostHeader) {
     .trim()
     .split(":")[0]
     .toLowerCase();
-  return publishedName(host) || brandedName() || DEFAULT_APP_NAME;
+  if (!host.endsWith(".grok.me")) {
+    return DEFAULT_APP_NAME;
+  }
+  const slug = host.split(".")[0] ?? "";
+  if (!slug || slug === "www" || !/^[a-z0-9-]{1,63}$/.test(slug)) {
+    return DEFAULT_APP_NAME;
+  }
+  return (
+    slug
+      .split("-")
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ") || DEFAULT_APP_NAME
+  );
 }
 
 /** True for Vercel system domains. Envoy rewrites origin Host to these; they SSO-protect `/og.jpg`. */
@@ -168,48 +158,24 @@ export function renderInstallPageHtml(template, { host, url } = {}) {
 }
 
 export function renderWebManifest(hostHeader) {
-  const host = String(hostHeader ?? "")
-    .split(",")[0]
-    .trim()
-    .split(":")[0]
-    .toLowerCase();
-  const published = Boolean(publishedName(host));
   const name = appNameFromHost(hostHeader);
-  const icons = [
-    {
-      src: "/__grok/icon-180.png",
-      sizes: "180x180",
-      type: "image/png",
-      purpose: "any",
-    },
-  ];
-  if (!published) {
-    icons.push(
-      {
-        src: "/__grok/icon-512.png",
-        sizes: "512x512",
-        type: "image/png",
-        purpose: "any",
-      },
-      {
-        src: "/__grok/icon-512.png",
-        sizes: "512x512",
-        type: "image/png",
-        purpose: "maskable",
-      },
-    );
-  }
   return JSON.stringify(
     {
       name,
       short_name: name,
       id: "/",
-      start_url: published ? "/" : "/app",
+      start_url: "/",
       scope: "/",
       display: "standalone",
       background_color: "#000000",
       theme_color: "#000000",
-      icons,
+      icons: [
+        {
+          src: "/__grok/icon-180.png",
+          sizes: "180x180",
+          type: "image/png",
+        },
+      ],
     },
     null,
     2,
@@ -347,16 +313,10 @@ export function resolveOgTitle(
   if (fromSite) return fromSite;
   const fromDoc = String(documentTitle ?? "").trim();
   if (fromDoc) return fromDoc;
-  const hostName = String(host ?? "")
-    .split(",")[0]
-    .trim()
-    .split(":")[0]
-    .toLowerCase();
-  const fromHost = publishedName(hostName);
-  if (fromHost) return fromHost;
+  const fromHost = appNameFromHost(host);
+  if (fromHost && fromHost !== DEFAULT_APP_NAME) return fromHost;
   const fromArg = String(appName ?? "").trim();
-  if (fromArg && fromArg !== DEFAULT_APP_NAME) return fromArg;
-  return brandedName() || fromArg || DEFAULT_APP_NAME;
+  return fromArg || DEFAULT_APP_NAME;
 }
 
 export function siteHasCustomCard(site = {}) {

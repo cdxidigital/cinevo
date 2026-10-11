@@ -58,20 +58,23 @@ export function captureFileStill(file: File) {
 }
 
 export async function enrichLocalStills(titles: { id: string; path?: string }[], files: File[]) {
-  const queue = titles.slice(0, 36);
+  const queue = titles;
   let cursor = 0;
+  let captures = 0;
   const worker = async () => {
     while (cursor < queue.length) {
       const title = queue[cursor];
       cursor += 1;
-      const file = files.find((item) => item.name === title.path || (item.webkitRelativePath || "").endsWith(`/${title.path}`));
+      const file = files.find((item) => (item.webkitRelativePath || item.name) === title.path);
       if (!file) continue;
       const sidecar = sidecarImage(file, files);
+      if (!sidecar && captures >= 80) continue;
+      if (!sidecar) captures += 1;
       const url = sidecar ? await fileToDataUrl(sidecar) : await captureFileStill(file);
       if (!url) continue;
       await saveThumb(title.id, url);
       useCinevo.getState().patchArtwork([{ id: title.id, poster: url, still: url }]);
     }
   };
-  await Promise.all([worker(), worker()]);
+  await Promise.all([worker(), worker(), worker()]);
 }

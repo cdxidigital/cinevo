@@ -1,5 +1,4 @@
 import { ArrowUpRight, Download } from "lucide-react";
-import { INSTALLERS } from "@/lib/node-client";
 
 export function InstallerCards() {
   return (
@@ -10,27 +9,6 @@ export function InstallerCards() {
     </div>
   );
 }
-
-/* Previous download-card implementation retained for later verified releases.
-export function LegacyInstallerCards() {
-  return (
-    <div className="app-shelf app-shelf--grid">
-      {INSTALLERS.map((item) => (
-        <a key={item.id} href={item.href} download className="dl-card">
-          <img src="/node-icon.png" alt="" />
-          <p className="dl-card__kicker">{item.label}</p>
-          <strong>{item.arch}</strong>
-          <p>{item.hint}</p>
-          <span className="dl-card__go">
-            <Download size={16} /> Download Server
-          </span>
-        </a>
-      ))}
-    </div>
-  );
-}
-
-*/
 
 const PHONE_APPS = [
   {

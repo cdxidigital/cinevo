@@ -8,6 +8,19 @@ export function isLoopbackUrl(url?: string) {
   }
 }
 
+export function isPrivateLanNodeUrl(uri: string): boolean {
+  try {
+    const host = new URL(uri).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    if (isLoopbackUrl(uri) || host.endsWith(".lan") || host.endsWith(".home.arpa")) return true;
+    const ip = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(host);
+    if (!ip) return false;
+    const [a, b] = ip.slice(1, 3).map(Number);
+    return a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31);
+  } catch {
+    return false;
+  }
+}
+
 /** Public cloud egress must not reach local/LAN or metadata endpoints.
  * Local private servers require a separately configured, trusted LAN gateway.
  * DNS resolution must ALSO be checked on the server before real fetches. */

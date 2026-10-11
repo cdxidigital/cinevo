@@ -12,7 +12,7 @@ import type { PlaybackFit } from "@/lib/playback-urls";
 import { nodePlayUrl } from "@/lib/node-client";
 import { type WirelessVideo } from "@/lib/cast";
 import { openCast } from "./cast-sheet";
-import { isLoopbackUrl } from "@/lib/playback-urls";
+import { isLoopbackUrl, isPrivateLanNodeUrl } from "@/lib/playback-urls";
 import { averageColor, gateGain, noiseLevel, shapedMix } from "@/lib/house-mix";
 import { nextEpisode } from "@/lib/plex-shelf";
 import { BrandWatermark } from "./logo";
@@ -252,7 +252,13 @@ export function Player() {
     };
     if (title.source === "folder" && source?.baseUrl && title.path && nodeToken) {
       const base = source.baseUrl || nodeUrl;
-      if (isLoopbackUrl(base)) {
+      if (isPrivateLanNodeUrl(base)) {
+        // The cloud must not fetch RFC1918 or loopback media. Contact Node
+        // directly from the user's browser, or require a trusted HTTPS gateway.
+        if (window.location.protocol === "https:" && new URL(base).protocol === "http:" && !isLoopbackUrl(base)) {
+          setRemoteErr("This local Node uses HTTP on your LAN. Connect through a trusted HTTPS endpoint to play in a secure browser.");
+          return;
+        }
         setRemoteSrc(nodePlayUrl(base, nodeToken, title.path, title.id, fit));
         return;
       }

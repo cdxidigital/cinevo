@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   isLoopbackUrl,
+  isPrivateLanNodeUrl,
   jellyfinStreamTarget,
   nodeStreamTarget,
   plexStreamTarget,
@@ -106,4 +107,13 @@ test("simultaneous streams use unique upstream playback sessions", () => {
   const jellyFirst = new URL(jellyfinStreamTarget("https://jf.example", "jellyfin-9", "tok", "client-1").url);
   const jellySecond = new URL(jellyfinStreamTarget("https://jf.example", "jellyfin-9", "tok", "client-1").url);
   assert.notEqual(jellyFirst.searchParams.get("PlaySessionId"), jellySecond.searchParams.get("PlaySessionId"));
+});
+
+test("LAN Node addresses are routed locally, not through the public cloud", () => {
+  assert.equal(isPrivateLanNodeUrl("http://192.168.1.10:48184"), true);
+  assert.equal(isPrivateLanNodeUrl("http://10.0.0.4:48184"), true);
+  assert.equal(isPrivateLanNodeUrl("http://172.20.0.4:48184"), true);
+  assert.equal(isPrivateLanNodeUrl("http://nas.local:48184"), true);
+  assert.equal(isPrivateLanNodeUrl("http://127.0.0.1:48184"), true);
+  assert.equal(isPrivateLanNodeUrl("https://media.example.net"), false);
 });

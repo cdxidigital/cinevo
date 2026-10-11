@@ -775,6 +775,7 @@ export const useCinevo = create<CinevoState>()(
           noticesOpen: false,
           nodeToken: "",
           nodeDevice: "",
+          aiConsent: false,
           plexClientId: "",
           libraryOwner: "",
           plexToken: "",

@@ -1,18 +1,6 @@
 {
-  "version": "0.2.0",
-  "builtAt": "2026-09-15T22:25:07.810Z",
-  "port": 48184,
-  "bind": "127.0.0.1",
-  "icon": "/node-icon.png",
-  "signed": {
-    "windows": "authenticode:CINEVO",
-    "mac": "ad-hoc Mach-O signature via ldid + AppIcon.icns",
-    "linux": "ELF x64 for Linux and NAS"
-  },
-  "installers": {
-    "windowsX64": "/installers/CINEVO-Node-Windows-x64.zip",
-    "macAppleSilicon": "/installers/CINEVO-Node-macOS-Apple-Silicon.zip",
-    "macIntel": "/installers/CINEVO-Node-macOS-Intel.zip",
-    "linuxX64": "/installers/CINEVO-Node-Linux-x64.zip"
-  }
+  "version": null,
+  "status": "release-security-hold",
+  "downloadable": false,
+  "message": "Native builds require replacement signing credentials and verification. No installers are available."
 }

@@ -2,6 +2,8 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { byMood, type Mood, type Title } from "./catalog";
 import type { LibSource, LibraryTitle, ThemeId } from "./library";
+import { EMPTY_HOUSE, rememberVisit, type HouseRecord } from "./house-card";
+import { mixMode, clampEq, type MixMode } from "./house-mix";
 import { makePoster, migrateTheme } from "./library";
 import type { Collection, Marker, PlayLog, TitlePatch } from "./house-tools";
 import type { PlexServer } from "./plex";
@@ -27,6 +29,12 @@ export type Preferences = {
   subtitleOffset: number;
   libraryView: LibraryView;
   librarySort: LibrarySort;
+  mix: MixMode;
+  ambience: boolean;
+  denoise: boolean;
+  eqLow: number;
+  eqMid: number;
+  eqHigh: number;
 };
 
 export type SourceFilter = "all" | "folder" | "plex" | "jellyfin" | "shared";
@@ -107,6 +115,7 @@ type CinevoState = {
   markers: Marker[];
   plays: PlayLog[];
   patches: Record<string, TitlePatch>;
+  house: HouseRecord;
   setRoom: (room: Room) => void;
   openTitle: (id: string) => void;
   closeTitle: () => void;
@@ -176,6 +185,8 @@ type CinevoState = {
   addMarker: (titleId: string, at: number, label: string) => void;
   removeMarker: (id: string) => void;
   clearLocalData: () => void;
+  noteVisit: () => void;
+  finishOnboarding: () => void;
 };
 
 export const DEFAULT_LIBRARIES: Library[] = [];
@@ -191,6 +202,12 @@ const DEFAULT_PREFS: Preferences = {
   subtitleOffset: 0,
   libraryView: "grid",
   librarySort: "title",
+  mix: "premiere",
+  ambience: true,
+  denoise: true,
+  eqLow: 0,
+  eqMid: 0,
+  eqHigh: 0,
 };
 
 const FRESH: Pick<
@@ -295,6 +312,7 @@ export const useCinevo = create<CinevoState>()(
       markers: [],
       plays: [],
       patches: {},
+      house: EMPTY_HOUSE,
       setRoom: (room) => set({ room, selectedId: null }),
       openTitle: (id) => set({ selectedId: id }),
       closeTitle: () => set({ selectedId: null }),
@@ -471,7 +489,7 @@ export const useCinevo = create<CinevoState>()(
         const next = titles.filter((t) => !existing.has(t.id));
         const sources = get().sources.filter((s) => s.id !== source.id);
         set({
-          localTitles: [...next, ...get().localTitles].slice(0, 200),
+          localTitles: [...next, ...get().localTitles].slice(0, 2000),
           sources: [{ ...source, count: next.length + (get().localTitles.filter((t) => t.sourceLabel === source.name).length) }, ...sources],
         });
         get().flash(next.length ? `Added ${next.length} titles from ${source.name}` : "No new video files in that folder");
@@ -487,7 +505,7 @@ export const useCinevo = create<CinevoState>()(
       addRemoteTitles: (titles, source) => {
         const existing = new Set(get().remoteTitles.map((t) => t.id));
         const next = titles.filter((t) => !existing.has(t.id));
-        const merged = [...next, ...get().remoteTitles].slice(0, 300);
+        const merged = [...next, ...get().remoteTitles].slice(0, 2000);
         const sources = get().sources.filter((s) => s.id !== source.id);
         const count = merged.filter((t) => t.source === source.kind && (t.sourceLabel === source.name || t.sourceLabel.startsWith(`${source.name.replace(/^@/, "")} ·`))).length || next.length;
         set({
@@ -630,6 +648,7 @@ export const useCinevo = create<CinevoState>()(
           markers: [],
           plays: [],
           patches: {},
+          house: EMPTY_HOUSE,
           prefs: { ...get().prefs, theme: get().prefs.theme, dashboardWidgets: [...DEFAULT_DASHBOARD_WIDGETS] },
         });
         try {
@@ -642,6 +661,13 @@ export const useCinevo = create<CinevoState>()(
         void import("./folder-handles").then((m) => m.clearFolderHandles());
         get().flash("Local data cleared");
       },
+      noteVisit: () => {
+        const today = new Date().toISOString().slice(0, 10);
+        const visits = rememberVisit(get().house.visits, today);
+        if (visits === get().house.visits) return;
+        set({ house: { ...get().house, visits } });
+      },
+      finishOnboarding: () => set({ house: { ...get().house, onboarded: true } }),
     }),
     {
       name: "cinevo-local-v4",
@@ -695,6 +721,13 @@ export const useCinevo = create<CinevoState>()(
           markers: Array.isArray(p.markers) ? p.markers : [],
           plays: Array.isArray(p.plays) ? p.plays : [],
           patches: p.patches && typeof p.patches === "object" ? p.patches : {},
+          house: {
+            onboarded:
+              p.house?.onboarded === true ||
+              (Array.isArray(p.sources) && p.sources.length > 0) ||
+              (Array.isArray(p.plays) && p.plays.length > 0),
+            visits: Array.isArray(p.house?.visits) ? p.house.visits.filter((day) => typeof day === "string").slice(0, 21) : [],
+          },
           room:
             p.room === "browse" || p.room === "movies" || p.room === "shows" || p.room === "sidebar" || p.room === "tools"
               ? p.room
@@ -709,6 +742,12 @@ export const useCinevo = create<CinevoState>()(
             subtitleOffset: clampNumber(p.prefs?.subtitleOffset, -15, 15, 0),
             libraryView: p.prefs?.libraryView === "list" || p.prefs?.libraryView === "hybrid" ? p.prefs.libraryView : "grid",
             librarySort: p.prefs?.librarySort === "year" || p.prefs?.librarySort === "added" ? p.prefs.librarySort : "title",
+            mix: mixMode(p.prefs?.mix),
+            ambience: p.prefs?.ambience !== false,
+            denoise: p.prefs?.denoise !== false,
+            eqLow: clampEq(p.prefs?.eqLow),
+            eqMid: clampEq(p.prefs?.eqMid),
+            eqHigh: clampEq(p.prefs?.eqHigh),
           },
         };
       },
@@ -737,13 +776,18 @@ export const useCinevo = create<CinevoState>()(
           ...t,
           poster: t.poster?.startsWith("data:") ? "" : t.poster,
         })),
-        remoteTitles: s.remoteTitles,
+        remoteTitles: s.remoteTitles.map((t) => ({
+          ...t,
+          poster: t.poster?.startsWith("data:") ? "" : t.poster,
+          still: t.still?.startsWith("data:") ? "" : t.still,
+        })),
         sourceFilter: s.sourceFilter,
         activeSourceId: s.activeSourceId,
         collections: s.collections,
         markers: s.markers,
         plays: s.plays,
         patches: s.patches,
+        house: s.house,
         room: s.room,
       }),
     },

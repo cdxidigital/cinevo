@@ -1,7 +1,26 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applySourceFilter, isVideoFile, migrateTheme, parseFilename, sourceForTitle } from "./library.ts";
+import { applySourceFilter, isVideoFile, migrateTheme, parseFilename, scanFileList, sourceForTitle } from "./library.ts";
 import type { LibraryTitle, LibSource } from "./library.ts";
+
+test("folder scan keeps nested episodes instead of stopping at 80", () => {
+  const files = Array.from({ length: 90 }, (_, i) => {
+    const season = String(Math.floor(i / 10) + 1).padStart(2, "0");
+    const ep = String((i % 10) + 1).padStart(2, "0");
+    const name = i < 10 ? `Episode ${ep}.mkv` : `Show S${season}E${ep}.mkv`;
+    const file = new File([new Uint8Array(8)], name);
+    Object.defineProperty(file, "webkitRelativePath", { value: `Show/Season ${season}/${name}` });
+    return file;
+  });
+  const titles = scanFileList(files, "Show");
+  assert.equal(titles.length, 90);
+  assert.equal(titles.every((title) => title.kind === "series"), true);
+  assert.equal(new Set(titles.map((title) => title.id)).size, 90);
+  assert.equal(titles[0].title, "Show · S01E01");
+  assert.equal(titles[10].title, "Show · S02E01");
+  const ordered = titles.map((title) => title.title).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  assert.ok(ordered.indexOf("Show · S01E02") < ordered.indexOf("Show · S01E10"));
+});
 
 test("parseFilename reads title and year", () => {
   assert.equal(parseFilename("Blade Runner (1982).mkv").title, "Blade Runner");

@@ -6,7 +6,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const crypto = require("node:crypto");
-const { exec } = require("node:child_process");
+const { exec, execFile, spawn } = require("node:child_process");
+const { ffmpegSegmentArgs, playlist } = require("./convert.cjs");
 
 const VERSION = "0.3.0";
 const PORT = Number(process.env.CINEVO_NODE_PORT || 48184);
@@ -97,6 +98,85 @@ const receiver = {
   queue: [],
   now: { title: "", detail: "", playing: false, position: 0, volume: 1, titleId: "" },
 };
+let encoderReady;
+let activeConverts = 0;
+
+function detectEncoder() {
+  return new Promise((resolve) => {
+    execFile("ffmpeg", ["-hide_banner", "-encoders"], { timeout: 8000 }, (err, stdout) => {
+      if (err) {
+        resolve("");
+        return;
+      }
+      const text = String(stdout || "");
+      for (const name of ["h264_videotoolbox", "h264_nvenc", "h264_qsv", "libx264"]) {
+        if (new RegExp(`\\b${name}\\b`).test(text)) {
+          resolve(name);
+          return;
+        }
+      }
+      resolve("");
+    });
+  });
+}
+
+function encoder() {
+  if (!encoderReady) encoderReady = detectEncoder();
+  return encoderReady;
+}
+
+function probeDuration(filePath) {
+  return new Promise((resolve) => {
+    execFile(
+      "ffprobe",
+      ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", filePath],
+      { timeout: 20000 },
+      (err, stdout) => {
+        const value = Number(String(stdout || "").trim());
+        resolve(!err && Number.isFinite(value) && value > 0 ? value : 0);
+      },
+    );
+  });
+}
+
+function streamConvert(req, res, filePath, index, whole, codec) {
+  if (activeConverts >= 3) {
+    send(res, 429, { error: "CINEVO is already converting three files. Try again in a moment." });
+    return;
+  }
+  activeConverts += 1;
+  const child = spawn("ffmpeg", ffmpegSegmentArgs(filePath, index, codec, whole), { stdio: ["ignore", "pipe", "pipe"] });
+  let opened = false;
+  const fail = () => {
+    if (opened) return;
+    opened = true;
+    send(res, 503, { error: "ffmpeg could not convert this file." });
+  };
+  child.once("error", fail);
+  child.stderr.on("data", () => {});
+  child.stdout.once("data", (chunk) => {
+    if (opened) return;
+    opened = true;
+    res.writeHead(200, {
+      "Content-Type": "video/mp2t",
+      "Cache-Control": "private, max-age=86400",
+      "Access-Control-Allow-Origin": "*",
+    });
+    res.write(chunk);
+    child.stdout.pipe(res);
+  });
+  const done = () => {
+    activeConverts = Math.max(0, activeConverts - 1);
+  };
+  child.on("close", () => {
+    done();
+    if (!opened) fail();
+    else if (!res.writableEnded) res.end();
+  });
+  res.on("close", () => {
+    child.kill("SIGKILL");
+  });
+}
 
 function libraryItem(id) {
   const rows = Array.isArray(state.config.library) ? state.config.library : [];
@@ -508,20 +588,32 @@ function hashStr(s) {
 
 const VIDEO_RE = /\.(mp4|mkv|mov|avi|webm|m4v|wmv|ts|m2ts)$/i;
 
-function walkVideos(dir, acc, depth) {
-  if (depth > 6 || acc.length >= 80) return;
+function walkVideos(dir, acc, depth, root, dirs) {
+  if (depth > 8 || acc.length >= 2000) return;
+  const base = root || dir;
+  if (dirs && depth > 0) {
+    const rel = path.relative(base, dir).split(path.sep).join("/");
+    if (rel) dirs.push(rel);
+  }
   let entries;
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
   } catch {
     return;
   }
+  entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
   for (const entry of entries) {
-    if (acc.length >= 80) return;
+    if (acc.length >= 2000) return;
     if (entry.name.startsWith(".")) continue;
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) walkVideos(full, acc, depth + 1);
-    else if (VIDEO_RE.test(entry.name)) acc.push({ name: entry.name, path: full });
+    if (entry.isDirectory()) walkVideos(full, acc, depth + 1, base, dirs);
+    else if (VIDEO_RE.test(entry.name)) {
+      acc.push({
+        name: entry.name,
+        path: full,
+        folder: path.relative(base, path.dirname(full)).split(path.sep).join("/"),
+      });
+    }
   }
 }
 
@@ -572,17 +664,50 @@ function yearOf(fileName) {
   return m ? m[1] : "";
 }
 
+function episodeCode(filePath, fileName) {
+  const normalized = String(filePath || fileName).replace(/\\/g, "/");
+  const parts = normalized.split("/").filter(Boolean);
+  const file = parts.pop() || fileName;
+  let match = /s(\d{1,2})e(\d{1,3})/i.exec(file) || /\b(\d{1,2})x(\d{1,3})\b/i.exec(file);
+  if (!match) {
+    const parent = parts[parts.length - 1] || "";
+    const season = /season\s*(\d{1,2})/i.exec(parent) || /^s(\d{1,2})$/i.exec(parent);
+    const ep = /(?:^|[^a-z])(?:episode|ep)[\s._-]*(\d{1,3})\b/i.exec(file) || /^e(\d{1,3})\b/i.exec(file) || /^(\d{1,3})(?:[\s._-]|$)/.exec(String(file).replace(/\.[^.]+$/, ""));
+    if (season && ep) match = [null, season[1], ep[1]];
+  }
+  if (!match) return "";
+  return `S${String(Number(match[1])).padStart(2, "0")}E${String(Number(match[2])).padStart(2, "0")}`;
+}
+
 function titleFromVideo(file) {
-  const title = prettyName(file.name);
   const year = yearOf(file.name);
+  const code = episodeCode(file.path, file.name);
+  let title = prettyName(file.name);
+  if (code) {
+    title = title
+      .replace(/s\d{1,2}\s*e\d{1,3}/gi, " ")
+      .replace(/\b\d{1,2}\s*x\s*\d{1,3}\b/gi, " ")
+      .replace(/\b(?:episode|ep)\s*\d{1,3}\b/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (/^e\d{1,3}$/i.test(title)) title = "";
+    const parts = String(file.path || "").replace(/\\/g, "/").split("/").filter(Boolean);
+    parts.pop();
+    const parent = parts[parts.length - 1] || "";
+    const show = /season|^s\d{1,2}$/i.test(parent) ? parts[parts.length - 2] || "" : "";
+    if (show && title.toLowerCase().startsWith(show.toLowerCase())) title = title.slice(show.length).trim();
+    const head = show ? `${show} · ${code}` : code;
+    title = title ? `${head} · ${title}` : head;
+  }
   return {
     id: `node-${hashStr(file.path)}`,
-    title,
+    title: title || prettyName(file.name),
     year,
-    kind: "movie",
-    genre: "Home video",
+    kind: code ? "series" : "movie",
+    genre: code ? "Series" : "Home video",
     path: file.path,
-    poster: posterData(file.path, title, year),
+    folder: file.folder || "",
+    poster: posterData(file.path, title || prettyName(file.name), year),
   };
 }
 
@@ -876,7 +1001,8 @@ async function handle(req, res) {
       return;
     }
     const files = [];
-    walkVideos(folderPath, files, 0);
+    const network = [];
+    walkVideos(folderPath, files, 0, folderPath, network);
     const name = path.basename(folderPath);
     const folder = {
       id: `folder-${crypto.randomBytes(4).toString("hex")}`,
@@ -900,6 +1026,7 @@ async function handle(req, res) {
       name,
       count: files.length,
       titles: library,
+      network: [...new Set(network)].slice(0, 400),
     });
     return;
   }
@@ -960,7 +1087,53 @@ async function handle(req, res) {
       send(res, 404, { error: "That file is not in a scanned Node folder." });
       return;
     }
+    if (url.searchParams.get("fit") === "compatible") {
+      const codec = await encoder();
+      if (!codec) {
+        send(res, 503, { error: "Install ffmpeg on this computer. CINEVO Node uses it when a file will not play in the browser." });
+        return;
+      }
+      const duration = await probeDuration(filePath);
+      const body = playlist({
+        filePath: url.searchParams.get("path") || filePath,
+        id: url.searchParams.get("id") || "",
+        token: url.searchParams.get("token") || "",
+        duration,
+      });
+      res.writeHead(200, {
+        "Content-Type": "application/vnd.apple.mpegurl",
+        "Cache-Control": "private, no-store",
+        "Access-Control-Allow-Origin": "*",
+      });
+      res.end(body);
+      return;
+    }
     streamFile(req, res, filePath);
+    return;
+  }
+
+  if ((req.method === "GET" || req.method === "HEAD") && url.pathname === "/v1/convert") {
+    if (!sessionFrom(req, url)) {
+      send(res, 401, { error: "The local pairing session expired" });
+      return;
+    }
+    const filePath = findPlayPath(url.searchParams.get("id") || "", url.searchParams.get("path") || "");
+    if (!filePath) {
+      send(res, 404, { error: "That file is not in a scanned Node folder." });
+      return;
+    }
+    const codec = await encoder();
+    if (!codec) {
+      send(res, 503, { error: "Install ffmpeg on this computer. CINEVO Node uses it when a file will not play in the browser." });
+      return;
+    }
+    const index = Math.max(0, Math.min(20000, Number(url.searchParams.get("i")) || 0));
+    if (req.method === "HEAD") {
+      res.writeHead(200, { "Content-Type": "video/mp2t", "Access-Control-Allow-Origin": "*" });
+      res.end();
+      return;
+    }
+    streamConvert(req, res, filePath, index, url.searchParams.get("whole") === "1", codec);
     return;
   }
 

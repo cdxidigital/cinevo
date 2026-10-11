@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { SignedIn, SignedOut, UserButton } from "@/lib/auth/gates";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
-import { claimUsername, getMyProfile } from "@/lib/sharing";
+import { claimUsername, getMyProfile, suggestUsername } from "@/lib/sharing";
 import { cn } from "@/lib/utils";
 
 export function AuthSlot({ className }: { className?: string }) {
@@ -73,7 +73,27 @@ export function UsernameGate() {
         const res = await getMyProfile();
         if (cancelled || mine !== ticket.current) return;
         if (window.sessionStorage.getItem("cinevo-username-later") === "1") return;
-        setNeeded(Boolean(res.ok && !res.profile));
+        if (!res.ok || res.profile) {
+          setNeeded(false);
+          return;
+        }
+        const guess = suggestUsername(user.primaryEmail || user.displayName || "");
+        if (guess) {
+          const claimed = await claimUsername({ data: { username: guess, display: user.displayName || guess } });
+          if (cancelled || mine !== ticket.current) return;
+          if (claimed.ok) {
+            setNeeded(false);
+            return;
+          }
+          const alt = `${guess.slice(0, 14)}${String(Date.now()).slice(-2)}`;
+          const second = await claimUsername({ data: { username: alt, display: user.displayName || alt } });
+          if (cancelled || mine !== ticket.current) return;
+          if (second.ok) {
+            setNeeded(false);
+            return;
+          }
+        }
+        setNeeded(true);
       } catch {
         /* session still settling */
       }

@@ -56,6 +56,12 @@ function token() {
   return out;
 }
 
+export function suggestUsername(value: string) {
+  const stem = value.split("@")[0].replace(/[^A-Za-z0-9_]/g, "");
+  const base = (/^[A-Za-z]/.test(stem) ? stem : `c${stem}`).slice(0, 16);
+  return base.length >= 3 ? base : "";
+}
+
 export function normalizeUsername(value: string) {
   return value.trim().replace(/^@/, "");
 }

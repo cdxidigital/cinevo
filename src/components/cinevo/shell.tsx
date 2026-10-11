@@ -6,6 +6,7 @@ import { useCinevo, type Room } from "@/lib/cinevo-store";
 import type { LibSource } from "@/lib/library";
 import { isLoopbackUrl } from "@/lib/playback-urls";
 import { cn } from "@/lib/utils";
+import { Onboarding } from "./onboarding";
 import { Logo } from "./logo";
 import { ArtworkSync } from "./artwork-sync";
 import { AccountLibraries } from "./account-libraries";
@@ -93,6 +94,12 @@ export function Shell({
   const navigate = useNavigate();
   const [drawer, setDrawer] = useState(false);
   const [navHidden, setNavHidden] = useState(false);
+  const hydrated = useCinevo((s) => s.hydrated);
+  const noteVisit = useCinevo((s) => s.noteVisit);
+
+  useEffect(() => {
+    if (hydrated) noteVisit();
+  }, [hydrated, noteVisit]);
 
   useEffect(() => {
     if (!NAV.some((item) => item.id === room)) setRoom("stage");
@@ -206,6 +213,9 @@ export function Shell({
             Settings
           </button>
           <NetDot labeled />
+          <a className="rail-credit" href="https://www.fourtee2.digital" target="_blank" rel="noreferrer">
+            CINEVO - a fourtee2digital project
+          </a>
         </div>
       </aside>
       <header className={cn("top-nav", navHidden && "is-hidden")}>
@@ -372,6 +382,7 @@ export function Shell({
       <main key={room} className={cn("house-main", room !== "stage" && "house-main--page")}>{children}</main>
       <ArtworkSync />
       <AccountLibraries />
+      <Onboarding />
       {overlays}
       <UsernameGate />
     </div>

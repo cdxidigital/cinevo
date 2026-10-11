@@ -24,6 +24,25 @@ export function serverAddressError(uri: string) {
 
 export type PlaybackFit = "original" | "compatible";
 
+function plexLocation(uri: string) {
+  try {
+    const host = new URL(uri).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    if (
+      host === "localhost" ||
+      host.endsWith(".local") ||
+      host.startsWith("10.") ||
+      host.startsWith("192.168.") ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
+      host.startsWith("127.")
+    ) {
+      return "lan";
+    }
+  } catch {
+    /* public */
+  }
+  return "wan";
+}
+
 export function plexStreamTarget(
   uri: string,
   ratingKey: string,
@@ -34,6 +53,10 @@ export function plexStreamTarget(
   const key = ratingKey.replace(/^plex-/, "").replace(/^\//, "");
   const client = clientId || "cinevo-web";
   const compatible = fit === "compatible";
+  const base = uri.replace(/\/$/, "");
+  const session = `c${Date.now().toString(36)}${key}`.replace(/[^a-z0-9]/gi, "").slice(0, 40);
+  const profile =
+    "add-transcode-target(type=videoProfile&context=streaming&protocol=http&container=mp4&videoCodec=h264&audioCodec=aac&subtitleCodec=)";
   const params = new URLSearchParams({
     hasMDE: "1",
     path: `/library/metadata/${key}`,
@@ -44,36 +67,45 @@ export function plexStreamTarget(
     directPlay: "0",
     directStream: compatible ? "0" : "1",
     directStreamAudio: compatible ? "0" : "1",
-    videoQuality: compatible ? "80" : "99",
-    maxVideoBitrate: compatible ? "20000" : "200000",
-    location: "lan",
-    mediaBufferSize: compatible ? "10240" : "20480",
-    subtitleSize: "100",
+    videoQuality: compatible ? "70" : "99",
+    maxVideoBitrate: compatible ? "12000" : "200000",
+    location: plexLocation(uri),
+    mediaBufferSize: compatible ? "20480" : "20480",
     audioBoost: "100",
     autoAdjustQuality: "0",
-    copyts: "1",
+    copyts: compatible ? "0" : "1",
     offset: "0",
-    session: `cinevo-${key}`.slice(0, 48),
+    subtitles: "none",
+    session,
     "X-Plex-Product": "CINEVO",
     "X-Plex-Client-Identifier": client,
     "X-Plex-Platform": "Chrome",
+    "X-Plex-Device": "Web",
+    "X-Plex-Device-Name": "CINEVO",
     "X-Plex-Version": "1.0.0",
+    "X-Plex-Client-Profile-Name": "CINEVO",
+    "X-Plex-Client-Profile-Extra": profile,
     "X-Plex-Token": token,
   });
   if (compatible) {
     params.set("videoCodec", "h264");
     params.set("audioCodec", "aac");
-    params.set("videoResolution", "1920x1080");
+    params.set("container", "mp4");
   }
+  const headers: Record<string, string> = {
+    "X-Plex-Token": token,
+    "X-Plex-Product": "CINEVO",
+    "X-Plex-Client-Identifier": client,
+    "X-Plex-Platform": "Chrome",
+    "X-Plex-Device": "Web",
+    "X-Plex-Device-Name": "CINEVO",
+    "X-Plex-Client-Profile-Name": "CINEVO",
+    "X-Plex-Client-Profile-Extra": profile,
+    Accept: "*/*",
+  };
   return {
-    url: `${uri.replace(/\/$/, "")}/video/:/transcode/universal/start.mp4?${params.toString()}`,
-    headers: {
-      "X-Plex-Token": token,
-      "X-Plex-Product": "CINEVO",
-      "X-Plex-Client-Identifier": client,
-      "X-Plex-Platform": "Chrome",
-      Accept: "*/*",
-    },
+    url: `${base}/video/:/transcode/universal/start.mp4?${params.toString()}`,
+    headers,
   };
 }
 
@@ -87,16 +119,25 @@ export function jellyfinStreamTarget(
   const id = itemId.replace(/^jellyfin-/, "").replace(/^jf-/, "");
   const client = clientId || "cinevo-web";
   const compatible = fit === "compatible";
+  const session = `c${Date.now().toString(36)}`.replace(/[^a-z0-9]/gi, "").slice(0, 24);
   const params = new URLSearchParams({
     static: compatible ? "false" : "true",
     mediaSourceId: id,
-    MaxStreamingBitrate: compatible ? "20000000" : "200000000",
+    MaxStreamingBitrate: compatible ? "12000000" : "200000000",
     api_key: token,
+    PlaySessionId: session,
   });
   if (compatible) {
     params.set("VideoCodec", "h264");
     params.set("AudioCodec", "aac");
     params.set("Container", "mp4");
+    params.set("TranscodingContainer", "mp4");
+    params.set("TranscodingProtocol", "http");
+    params.set("SegmentContainer", "mp4");
+    params.set("AllowVideoStreamCopy", "false");
+    params.set("AllowAudioStreamCopy", "false");
+    params.set("MaxAudioChannels", "2");
+    params.set("CopyTimestamps", "false");
   }
   return {
     url: `${base.replace(/\/$/, "")}/Videos/${encodeURIComponent(id)}/stream.mp4?${params.toString()}`,
@@ -109,9 +150,10 @@ export function jellyfinStreamTarget(
 }
 
 /** Token stays on the Authorization header so it is not written into the stream URL. */
-export function nodeStreamTarget(base: string, token: string, filePath: string, id?: string) {
+export function nodeStreamTarget(base: string, token: string, filePath: string, id?: string, fit: PlaybackFit = "original") {
   const params = new URLSearchParams({ path: filePath });
   if (id) params.set("id", id);
+  if (fit === "compatible") params.set("fit", "compatible");
   return {
     url: `${base.replace(/\/$/, "")}/v1/play?${params.toString()}`,
     headers: {

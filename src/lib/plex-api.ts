@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
 import {
+  parsePlexFolderPage,
   parsePlexMetadata,
   parsePlexResources,
   parsePlexSections,
@@ -131,19 +132,68 @@ export const plexImportSections = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const headers = { ...plexHeaders(data.clientId, data.token), "X-Plex-Token": data.token };
     const titles: ReturnType<typeof parsePlexMetadata> = [];
+    const folders = new Set<string>();
     try {
       for (const key of data.sectionKeys.slice(0, 12)) {
-        const body = await plexJson(
-          `${data.uri}/library/sections/${encodeURIComponent(key)}/all?X-Plex-Container-Start=0&X-Plex-Container-Size=80`,
-          headers,
-          12000,
-        );
-        titles.push(...parsePlexMetadata(body, data.sourceLabel));
+        const before = folders.size;
+        for (let start = 0; start < 1600 && titles.length < 1600; start += 200) {
+          let body: unknown;
+          try {
+            body = await plexJson(
+              `${data.uri}/library/sections/${encodeURIComponent(key)}/allLeaves?X-Plex-Container-Start=${start}&X-Plex-Container-Size=200`,
+              headers,
+              12000,
+            );
+          } catch (err) {
+            if (start > 0) break;
+            body = await plexJson(
+              `${data.uri}/library/sections/${encodeURIComponent(key)}/all?X-Plex-Container-Start=0&X-Plex-Container-Size=200`,
+              headers,
+              12000,
+            ).catch(() => {
+              throw err;
+            });
+          }
+          const page = parsePlexMetadata(body, data.sourceLabel);
+          if (!page.length) break;
+          titles.push(...page);
+          for (const title of page) if (title.folder) folders.add(title.folder);
+          const total = Number((body as { MediaContainer?: { totalSize?: number } }).MediaContainer?.totalSize || 0);
+          if (page.length < 200 || (total > 0 && start + page.length >= total)) break;
+        }
+        if (folders.size === before) await walkPlexFolders(data.uri, key, headers, folders);
       }
       const seen = new Set<string>();
       const unique = titles.filter((t) => (seen.has(t.id) ? false : (seen.add(t.id), true)));
-      return { ok: true as const, titles: unique };
+      return { ok: true as const, titles: unique.slice(0, 1600), folders: [...folders].slice(0, 400) };
     } catch (err) {
       return { ok: false as const, error: err instanceof Error ? err.message : "Could not import that Plex library." };
     }
   });
+
+async function walkPlexFolders(uri: string, sectionKey: string, headers: Record<string, string>, found: Set<string>) {
+  const seen = new Set<string>();
+  const walk = async (query: string, prefix: string, depth: number) => {
+    if (depth > 5 || found.size >= 400 || seen.has(query)) return;
+    seen.add(query);
+    let body: unknown;
+    try {
+      body = await plexJson(`${uri}/library/sections/${encodeURIComponent(sectionKey)}/folder${query}`, headers, 8000);
+    } catch {
+      return;
+    }
+    for (const row of parsePlexFolderPage(body)) {
+      const name = row.name || row.file.split(/[/\\]/).pop() || "";
+      const next = row.file
+        ? row.file.replace(/\\/g, "/").split("/").slice(0, -1).filter(Boolean).join("/")
+        : prefix && name
+          ? `${prefix}/${name}`
+          : name;
+      if (next) found.add(next);
+      if (!row.directory && row.file) continue;
+      const parent = row.key.includes("?") ? row.key.slice(row.key.indexOf("?")) : "";
+      if (parent) await walk(parent, next, depth + 1);
+    }
+  };
+  await walk("", "", 0);
+}

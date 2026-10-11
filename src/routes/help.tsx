@@ -20,7 +20,7 @@ function Help() {
       </section>
       <section>
         <h2>Watch</h2>
-        <p>Playback starts with the original file, proxied through CINEVO. If the browser cannot play it, CINEVO asks your Plex or Jellyfin server for an H.264 copy. That conversion uses the hardware you turned on there. CINEVO itself does not transcode. Choose Grid, List, or Hybrid on Movies, TV, and Library, and sort by title, year, or when it was added.</p>
+        <p>Playback starts with the original file. If the browser cannot play it, CINEVO converts it. A Plex or Jellyfin server makes an H.264 copy on that server. A file on CINEVO Node is converted there, in short pieces, so it can start and be skipped through. That needs ffmpeg installed on the computer running Node. Choose Grid, List, or Hybrid on Movies, TV, and Library, and sort by title, year, or when it was added.</p>
       </section>
       <section>
         <h2>On a TV</h2>

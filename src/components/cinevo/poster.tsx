@@ -168,7 +168,7 @@ const SORTS: { id: LibrarySort; label: string }[] = [
 
 function sortTitles(titles: Title[], sort: LibrarySort) {
   const copy = [...titles];
-  const byTitle = (a: Title, b: Title) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
+  const byTitle = (a: Title, b: Title) => a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: "base" });
   if (sort === "year") copy.sort((a, b) => (b.year || "").localeCompare(a.year || "") || byTitle(a, b));
   else if (sort === "added") copy.sort((a, b) => (b.addedAt || "").localeCompare(a.addedAt || "") || byTitle(a, b));
   else copy.sort(byTitle);

@@ -99,6 +99,7 @@ export function JellyfinConnect() {
           cast: t.cast,
           director: t.director,
           path: t.path || t.id.replace(/^jellyfin-/, ""),
+          folder: t.folder,
         }),
       );
       addRemoteTitles(titles, {
@@ -110,6 +111,7 @@ export function JellyfinConnect() {
         userId: session.userId,
         selected: true,
         count: titles.length,
+        folders: res.folders,
       });
       setSections([]);
       setMessage(`Imported ${titles.length} titles. CINEVO will proxy playback from this Jellyfin server.`);

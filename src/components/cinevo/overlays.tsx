@@ -3,6 +3,8 @@ import { Check, ChevronLeft, ListPlus, Play, Search, Star, X } from "lucide-reac
 import { filterCatalog, similarTo, type Title } from "@/lib/catalog";
 import { libraryPool, titleById, useCinevo } from "@/lib/cinevo-store";
 import { askCinevo } from "@/lib/ask-cinevo";
+import type { PremierePlan } from "@/lib/premiere";
+import { mixForTheme } from "@/lib/house-mix";
 import { Rail, ArtImage } from "./poster";
 import { InstallerCards } from "./installers";
 import { HouseRemote, InstallCinevo } from "./house-remote";
@@ -12,10 +14,11 @@ import { SharePanel } from "./share-panel";
 import { getMyProfile } from "@/lib/sharing";
 
 const AI_PRESETS = [
-  { label: "Tonight", q: "What should I watch tonight from this library?" },
-  { label: "Short", q: "Pick a shorter title I can finish tonight." },
-  { label: "Comfort", q: "A comforting rewatch from titles I already have." },
-  { label: "Bold", q: "Something bold and cinematic I have not queued lately." },
+  { label: "On deck", q: "What is on deck?" },
+  { label: "Resume", q: "Resume where I left off." },
+  { label: "Binge", q: "Binge the rest of the season." },
+  { label: "Double feature", q: "Build a double feature from films I have not finished." },
+  { label: "La Première", q: "Prepare La Première from a feature I have not finished." },
 ];
 
 export function Detail() {
@@ -338,8 +341,12 @@ export function CoreModal() {
   const aiConsent = useCinevo((s) => s.aiConsent);
   const setAiConsent = useCinevo((s) => s.setAiConsent);
   const flash = useCinevo((s) => s.flash);
+  const play = useCinevo((s) => s.play);
+  const setTheme = useCinevo((s) => s.setTheme);
+  const patchPrefs = useCinevo((s) => s.patchPrefs);
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
+  const [plan, setPlan] = useState<PremierePlan | null>(null);
   const [pending, setPending] = useState(false);
   const [profile, setProfile] = useState<{ username: string; xp: number; streak: number } | null>(null);
   useEffect(() => {
@@ -350,28 +357,53 @@ export function CoreModal() {
       })
       .catch(() => undefined);
   }, [open]);
-  const ask = async () => {
-    if (!question.trim() || pending) return;
+  const ask = async (seed?: string) => {
+    const next = (seed ?? question).trim();
+    if (!next || pending) return;
+    if (seed) setQuestion(seed);
     setPending(true);
     try {
+      const pool = libraryPool();
+      const progress = useCinevo.getState().progress;
+      const favorites = new Set(useCinevo.getState().favorites);
       const res = await askCinevo({
         data: {
-          question,
-          titles: libraryPool().map((t) => ({
+          question: next,
+          titles: pool.map((t) => ({
+            id: t.id,
             title: t.title,
             year: t.year,
             kind: t.kind,
             genre: t.genre,
             rating: t.rating,
             synopsis: t.synopsis,
+            runtime: t.runtime,
+            progress: progress[t.id] ?? 0,
+            favorite: favorites.has(t.id),
           })),
         },
       });
-      if (res.ok) setAnswer(res.text.replace(/\*\*/g, ""));
-      else flash(res.error);
+      if (res.ok) {
+        setAnswer(res.text.replace(/\*\*/g, ""));
+        setPlan(res.plan);
+      } else flash(res.error);
     } finally {
       setPending(false);
     }
+  };
+  const takeSeat = (next: PremierePlan) => {
+    setTheme(next.theme);
+    patchPrefs({
+      nightMode: true,
+      zenMode: true,
+      focusMode: true,
+      mix: next.mix || mixForTheme(next.theme),
+      ambience: true,
+      denoise: next.denoise !== false,
+    });
+    useCinevo.setState({ tonight: next.queueIds.slice(0, 8) });
+    play(next.playId);
+    setCoreOpen(false);
   };
   if (!open) return null;
   if (tab === "ai") {
@@ -380,8 +412,8 @@ export function CoreModal() {
         <section className="ask-panel" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Ask CINEVO">
           <header className="mb-4 flex items-start justify-between gap-3">
             <div>
-              <p className="font-ui text-xs font-semibold tracking-[0.14em] text-cine-cyan">ASK</p>
-              <h2 className="font-ui text-2xl font-semibold tracking-tight">What should we watch?</h2>
+              <p className="font-ui text-xs font-semibold tracking-[0.14em] text-cine-cyan">LA PREMIÈRE</p>
+              <h2 className="font-ui text-2xl font-semibold tracking-tight">The attendant</h2>
             </div>
             <button type="button" aria-label="Close Ask" className="top-nav__icon" onClick={() => setCoreOpen(false)}>
               <X size={18} />
@@ -407,7 +439,7 @@ export function CoreModal() {
                     key={p.label}
                     type="button"
                     className="h-11 rounded-full border border-white/10 bg-white/5 px-4 font-ui text-sm"
-                    onClick={() => setQuestion(p.q)}
+                    onClick={() => void ask(p.q)}
                   >
                     {p.label}
                   </button>
@@ -417,18 +449,30 @@ export function CoreModal() {
                 value={question}
                 onChange={(e) => setQuestion(e.target.value)}
                 maxLength={400}
-                placeholder="What should I watch tonight?"
+                placeholder="A premiere, a short sitting, or a title by name."
                 className="h-28 w-full rounded-2xl border border-white/10 bg-black/30 p-3 font-ui"
               />
               <button
                 type="button"
-                onClick={ask}
+                onClick={() => void ask()}
                 disabled={pending}
                 className="house-btn house-btn--play h-11"
               >
-                {pending ? "Thinking…" : "Ask CINEVO"}
+                {pending ? "Preparing the house…" : "Ask the attendant"}
               </button>
               {answer ? <p className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm leading-relaxed text-cine-muted">{answer}</p> : null}
+              {plan?.steps?.length ? (
+                <ol className="space-y-1 text-sm text-cine-faint">
+                  {plan.steps.map((step) => (
+                    <li key={step}>{step}</li>
+                  ))}
+                </ol>
+              ) : null}
+              {plan ? (
+                <button type="button" className="house-btn h-11 w-full" onClick={() => takeSeat(plan)}>
+                  Take your seat
+                </button>
+              ) : null}
             </div>
           ) : (
             <p className="mt-4 text-sm text-cine-faint">Turn consent on to ask about titles in this house. Nothing leaves until you do.</p>

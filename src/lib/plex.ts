@@ -146,19 +146,60 @@ export function parsePlexSections(raw: unknown): PlexSection[] {
   }).filter((s) => s.key);
 }
 
+export function plexFilePath(meta: Record<string, unknown>) {
+  const media = Array.isArray(meta.Media) ? meta.Media : [];
+  for (const item of media) {
+    const parts = Array.isArray((item as { Part?: unknown[] }).Part) ? (item as { Part: unknown[] }).Part : [];
+    for (const part of parts) {
+      const file = String((part as { file?: string }).file || "");
+      if (file) return file;
+    }
+  }
+  return "";
+}
+
+function folderFromFile(file: string) {
+  const parts = file.replace(/\\/g, "/").split("/").filter(Boolean);
+  parts.pop();
+  return parts.join("/");
+}
+
+export function parsePlexFolderPage(raw: unknown) {
+  const container = (raw as { MediaContainer?: { Metadata?: unknown[]; Directory?: unknown[] } })?.MediaContainer;
+  const rows = container?.Metadata || container?.Directory || [];
+  return rows.map((item) => {
+    const row = item as Record<string, unknown>;
+    const file = plexFilePath(row) || String(row.file || "");
+    const key = String(row.key || "");
+    const name = String(row.title || row.name || "");
+    const directory = !file && (row.type === "directory" || key.includes("folder") || key.includes("parent="));
+    return { name, key, file, directory };
+  });
+}
+
 export function parsePlexMetadata(raw: unknown, sourceLabel: string) {
   const container = (raw as { MediaContainer?: { Metadata?: unknown[] } })?.MediaContainer;
   const meta = container?.Metadata || [];
-  return meta.slice(0, 80).map((item) => {
+  return meta.map((item) => {
     const m = item as Record<string, unknown>;
     const facts = factsFromPlex(m, String(m.ratingKey || ""));
     const genreTag = facts.genre || "Plex";
+    const type = String(m.type || "");
+    let title = String(m.title || "Untitled");
+    if (type === "episode") {
+      const show = String(m.grandparentTitle || "");
+      const season = Number(m.parentIndex || 0);
+      const episode = Number(m.index || 0);
+      const code = season || episode ? `S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}` : "";
+      title = [show, code, title].filter(Boolean).join(" · ");
+    }
+    const file = plexFilePath(m);
     return {
       id: `plex-${m.ratingKey || m.guid || m.title}`,
       ratingKey: String(m.ratingKey || ""),
-      title: String(m.title || "Untitled"),
+      title,
       year: String(m.year || facts.year || ""),
-      kind: m.type === "show" ? ("series" as const) : ("movie" as const),
+      kind: type === "episode" || type === "show" ? ("series" as const) : ("movie" as const),
       synopsis: facts.synopsis || String(m.summary || ""),
       genre: genreTag,
       genres: facts.genres.length ? facts.genres : [genreTag],
@@ -169,6 +210,7 @@ export function parsePlexMetadata(raw: unknown, sourceLabel: string) {
       posterPath: facts.posterPath,
       stillPath: facts.stillPath,
       sourceLabel,
+      folder: file ? folderFromFile(file) : "",
     };
   });
 }

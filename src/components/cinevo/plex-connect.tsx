@@ -162,6 +162,7 @@ export function PlexConnect() {
           cast: t.cast,
           director: t.director,
           path: t.ratingKey || t.id.replace(/^plex-/, ""),
+          folder: t.folder,
         }),
       );
       addRemoteTitles(titles, {
@@ -172,6 +173,7 @@ export function PlexConnect() {
         accessToken: token,
         selected: true,
         count: titles.length,
+        folders: res.folders,
       });
       setOpened(null);
       setMessage(`Imported ${titles.length} titles from ${opened.server.name}. CINEVO will proxy playback.`);

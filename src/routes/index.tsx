@@ -1,6 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowDownRight, Play, ShieldCheck } from "lucide-react";
-import { InstallCinevo } from "@/components/cinevo/house-remote";
 import { InstallerCards, PhoneApps } from "@/components/cinevo/installers";
 import { Logo, Mark } from "@/components/cinevo/logo";
 import { LandingAuth } from "@/components/cinevo/account";
@@ -11,18 +10,29 @@ import { THEMES } from "@/lib/library";
 
 export const Route = createFileRoute("/")({ component: Home });
 
+const POSTERS = [
+  "neon-blade",
+  "glass-harbor",
+  "midnight-protocol",
+  "tokyo-neon",
+  "ember-choir",
+  "northbridge",
+  "crimson-code",
+  "stillwater",
+];
+
 const STEPS = [
-  { n: "01", t: "Pick a source", d: "Plex, Jellyfin, a folder on this computer, or CINEVO Node — one wizard, one library at a time." },
-  { n: "02", t: "Choose sections", d: "Select only the movie and series libraries you want CINEVO to index." },
-  { n: "03", t: "Make it yours", d: "Your connected library appears only after your choice. Nothing is published." },
+  { n: "01", t: "Open the house", d: "A passkey, a phone, or a password. The seat is yours on every screen." },
+  { n: "02", t: "Bring the library", d: "Plex, Jellyfin, a folder, or CINEVO Server. Pick the sections. Leave the rest." },
+  { n: "03", t: "Press play", d: "CINEVO proxies the file and converts what this browser cannot. Nothing is published." },
 ];
 
 const HIGHLIGHTS = [
   {
     n: "01",
     eyebrow: "YOUR FILES",
-    title: "One library, still yours.",
-    description: "Folders, Plex, Jellyfin, or the CINEVO server. You choose the sections. Nothing is published.",
+    title: "Tonight starts here.",
+    description: "Connect the server you already trust. CINEVO plays the file, and asks that server to convert what a browser cannot.",
   },
   {
     n: "02",
@@ -84,7 +94,7 @@ function Home() {
               <em>Your moment.</em>
             </h1>
             <p>
-              A private cinema for the libraries you already own. Play them here, cast them to a server, or hand the remote to your phone.
+              The films and shows you already keep, playing like a cinema. Plex, Jellyfin, or a folder at home — one house, every screen.
             </p>
             <div className="public-hero__actions">
               <EnterHouse label="Play your library" />
@@ -100,13 +110,20 @@ function Home() {
               </span>
             </div>
           </div>
+          <div className="home-marquee" aria-hidden="true">
+            <div className="home-marquee__track">
+              {[...POSTERS, ...POSTERS].map((id, i) => (
+                <img key={`${id}-${i}`} src={`/posters/${id}.jpg`} alt="" />
+              ))}
+            </div>
+          </div>
         </section>
 
         <section className="home-reel" aria-labelledby="home-reel-title">
           <Reveal as="header">
             <div>
               <span className="public-kicker">GLASS THEMES</span>
-              <h2 id="home-reel-title">Choose the house. The type stays clear.</h2>
+              <h2 id="home-reel-title">Eight houses. Pick the mood.</h2>
             </div>
             <p>Eight looks. Same layout. Titles, buttons, and the mark stay easy to read.</p>
           </Reveal>
@@ -140,7 +157,7 @@ function Home() {
         <section className="home-highlights" id="sharing" aria-labelledby="home-highlights-title">
           <Reveal as="header">
             <span className="public-kicker">WHAT YOU GET</span>
-            <h2 id="home-highlights-title">A quieter way in.</h2>
+            <h2 id="home-highlights-title">Sit down. The library is already yours.</h2>
           </Reveal>
           <div className="home-highlights__grid">
             {HIGHLIGHTS.map((item, i) => (
@@ -173,12 +190,9 @@ function Home() {
             <p className="public-kicker mt-14">CINEVO PLAYER</p>
             <h2 className="mt-4 font-ui text-3xl font-semibold tracking-tight md:text-4xl">One player. Every screen.</h2>
             <p className="mt-3 mb-6 max-w-xl text-sm text-cine-muted">
-              Plex splits playback into a desktop app, an HTPC app, a website, and store-only phone apps. CINEVO is one installable player. Offline install is not a paid pass. The files stay on the server.
+              One player for the web, a phone, and a television. The files stay on the server you choose.
             </p>
-            <InstallCinevo />
-            <div className="mt-6">
-              <PhoneApps />
-            </div>
+            <PhoneApps />
           </Reveal>
         </section>
 
@@ -194,7 +208,7 @@ function Home() {
             </h2>
           </Reveal>
           <Reveal delay={100}>
-            <p>Connect the library you trust. Claim a username. Then settle in.</p>
+            <p>The lights are down. Connect a library, then take your seat.</p>
             <EnterHouse label="Begin with your library" />
           </Reveal>
         </section>
@@ -205,7 +219,11 @@ function Home() {
           <Logo size="lg" layout="stacked" />
         </Link>
         <div>
-          <p>Created by CDXI. Distributed as a Fourtee2 Digital project.</p>
+          <p className="public-footer__credit">
+            <a href="https://www.fourtee2.digital" target="_blank" rel="noreferrer">
+              CINEVO - a fourtee2digital project
+            </a>
+          </p>
           <nav className="public-footer__links" aria-label="More">
             <Link to="/node">Server</Link>
             <Link to="/help">Help</Link>

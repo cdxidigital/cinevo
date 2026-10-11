@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from "react";
-import { Activity, Bookmark, Cast, Download, Expand, Info, Pause, Play, Subtitles, Volume2, VolumeX, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import Hls from "hls.js";
+import { Activity, Bookmark, Cast, Download, Expand, Info, Pause, Play, SkipForward, Subtitles, Volume2, VolumeX, X } from "lucide-react";
 import { titleById, useCinevo } from "@/lib/cinevo-store";
 import { mediaUrl, sourceForTitle } from "@/lib/library";
+import { needsBrowserCopy } from "@/lib/convert";
 import { reconnectFolders } from "@/lib/folder-handles";
 import { bumpWatch } from "@/lib/sharing";
 import { useCurrentUser } from "@/lib/auth/use-current-user";
@@ -11,7 +13,24 @@ import type { PlaybackFit } from "@/lib/playback-urls";
 import { nodePlayUrl } from "@/lib/node-client";
 import { castBlock, type WirelessVideo } from "@/lib/cast";
 import { isLoopbackUrl } from "@/lib/playback-urls";
+import { averageColor, gateGain, noiseLevel, shapedMix } from "@/lib/house-mix";
+import { nextEpisode } from "@/lib/plex-shelf";
 import { BrandWatermark } from "./logo";
+
+type HouseAudio = {
+  ctx: AudioContext;
+  source: MediaElementAudioSourceNode;
+  comp: DynamicsCompressorNode;
+  presence: BiquadFilterNode;
+  low: BiquadFilterNode;
+  mid: BiquadFilterNode;
+  high: BiquadFilterNode;
+  hpf: BiquadFilterNode;
+  lpf: BiquadFilterNode;
+  gate: GainNode;
+  gain: GainNode;
+  meter: AnalyserNode;
+};
 
 function formatClock(current: number, duration: number) {
   const stamp = (n: number) => {
@@ -76,6 +95,13 @@ export function Player() {
   const playing = useCinevo((s) => s.playing);
   const progress = useCinevo((s) => (s.playingId ? s.progress[s.playingId] ?? 0 : 0));
   const focusMode = useCinevo((s) => s.prefs.focusMode);
+  const mix = useCinevo((s) => s.prefs.mix);
+  const ambience = useCinevo((s) => s.prefs.ambience);
+  const denoise = useCinevo((s) => s.prefs.denoise);
+  const eqLow = useCinevo((s) => s.prefs.eqLow);
+  const eqMid = useCinevo((s) => s.prefs.eqMid);
+  const eqHigh = useCinevo((s) => s.prefs.eqHigh);
+  const patchPrefs = useCinevo((s) => s.patchPrefs);
   const play = useCinevo((s) => s.play);
   const togglePlay = useCinevo((s) => s.togglePlay);
   const stopPlay = useCinevo((s) => s.stopPlay);
@@ -89,11 +115,19 @@ export function Player() {
   const sources = useCinevo((s) => s.sources);
   const nodeUrl = useCinevo((s) => s.nodeUrl);
   const nodeToken = useCinevo((s) => s.nodeToken);
+  const plexToken = useCinevo((s) => s.plexToken);
   const plexClient = useCinevo((s) => s.plexClientId);
   const user = useCurrentUser();
+  const localTitles = useCinevo((s) => s.localTitles);
+  const remoteTitles = useCinevo((s) => s.remoteTitles);
   const title = titleById(playingId);
+  const upcoming = useMemo(
+    () => (title ? nextEpisode(title, [...localTitles, ...remoteTitles]) : null),
+    [title, localTitles, remoteTitles],
+  );
   const videoRef = useRef<HTMLVideoElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  const audioRef = useRef<HouseAudio | null>(null);
   const [muted, setMuted] = useState(true);
   const [chrome, setChrome] = useState(true);
   const [statsOpen, setStatsOpen] = useState(false);
@@ -107,13 +141,50 @@ export function Player() {
   const [fitTitle, setFitTitle] = useState<string | null | undefined>(playingId);
   if (fitTitle !== playingId) {
     setFitTitle(playingId);
-    setFit("original");
+    const disk = title?.source === "folder" && !mediaUrl(title.id);
+    setFit(disk && needsBrowserCopy(title?.path || title?.title || "") ? "compatible" : "original");
   }
   const [onTv, setOnTv] = useState(false);
   const blob = title ? mediaUrl(title.id) : undefined;
   const file = playbackFailed ? undefined : blob || remoteSrc;
+  const converting = Boolean(file && fit === "compatible" && title?.source === "folder" && !blob);
   const cueBase = useRef(new WeakMap<TextTrackCue, { start: number; end: number }>());
   const primed = useRef("");
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !file || !converting) return;
+    if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      video.src = file;
+      return () => {
+        video.removeAttribute("src");
+        video.load();
+      };
+    }
+    if (!Hls.isSupported()) {
+      setRemoteErr("This browser cannot play a converted stream.");
+      return;
+    }
+    const hls = new Hls({ enableWorker: true, maxBufferLength: 30 });
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      hls.destroy();
+    };
+    hls.loadSource(file);
+    hls.attachMedia(video);
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      if (useCinevo.getState().playing) void video.play().catch(() => undefined);
+    });
+    hls.on(Hls.Events.ERROR, (_event, data) => {
+      if (!data.fatal) return;
+      setPlaybackFailed(true);
+      setRemoteErr("CINEVO could not convert this file. Install ffmpeg on the computer running CINEVO Node, then play it again.");
+      close();
+    });
+    return close;
+  }, [file, converting]);
 
   useEffect(() => {
     const video = videoRef.current as WirelessVideo | null;
@@ -182,7 +253,7 @@ export function Player() {
     if (!title || mediaUrl(title.id)) return;
     const source =
       sourceForTitle(title, sources) ||
-      sources.find((item) => item.kind === title.source && item.baseUrl && (item.accessToken || item.kind === "folder"));
+      sources.find((item) => item.kind === title.source && item.baseUrl && (item.accessToken || item.kind === "folder" || (item.kind === "plex" && plexToken)));
     const openProxy = (
       provider: "plex" | "jellyfin" | "node",
       uri: string,
@@ -191,7 +262,7 @@ export function Player() {
       clientId?: string,
     ) => {
       setRemotePending(true);
-      void issuePlayback({ data: { provider, uri, key, token, clientId, fit: provider === "node" ? "original" : fit } })
+      void issuePlayback({ data: { provider, uri, key, token, clientId, fit } })
         .then((res) => {
           if (cancelled) return;
           if (res.ok) setRemoteSrc(res.src);
@@ -207,7 +278,7 @@ export function Player() {
     if (title.source === "folder" && source?.baseUrl && title.path && nodeToken) {
       const base = source.baseUrl || nodeUrl;
       if (isLoopbackUrl(base)) {
-        setRemoteSrc(nodePlayUrl(base, nodeToken, title.path, title.id));
+        setRemoteSrc(nodePlayUrl(base, nodeToken, title.path, title.id, fit));
         return;
       }
       openProxy("node", base, title.path, nodeToken, title.id);
@@ -215,21 +286,138 @@ export function Player() {
         cancelled = true;
       };
     }
-    if ((title.source === "plex" || title.source === "jellyfin") && title.path && source?.baseUrl && source.accessToken) {
-      openProxy(title.source, source.baseUrl, title.path, source.accessToken, plexClient || undefined);
+    if ((title.source === "plex" || title.source === "jellyfin") && title.path && source?.baseUrl) {
+      const token = source.accessToken || (title.source === "plex" ? plexToken : "");
+      if (token) openProxy(title.source, source.baseUrl, title.path, token, plexClient || undefined);
     }
     return () => {
       cancelled = true;
     };
-  }, [title?.id, title?.path, title?.source, title?.sourceLabel, nodeToken, nodeUrl, plexClient, sources, fit]);
+  }, [title?.id, title?.path, title?.source, title?.sourceLabel, nodeToken, nodeUrl, plexClient, plexToken, sources, fit]);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !file) return;
     video.muted = muted;
-    if (playing) void video.play().catch(() => useCinevo.setState({ playing: false }));
+    if (playing) void video.play().catch(() => {
+      if (!converting) useCinevo.setState({ playing: false });
+    });
     else video.pause();
-  }, [playing, file, playingId, muted]);
+  }, [playing, file, playingId, muted, converting]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !file) return;
+    const Ctx = window.AudioContext;
+    if (!Ctx) return;
+    let graph = audioRef.current;
+    if (!graph || graph.source.mediaElement !== video || !graph.hpf) {
+      try {
+      const ctx = new Ctx();
+      const source = ctx.createMediaElementSource(video);
+      const hpf = ctx.createBiquadFilter();
+      hpf.type = "highpass";
+      const gate = ctx.createGain();
+      const comp = ctx.createDynamicsCompressor();
+      const low = ctx.createBiquadFilter();
+      low.type = "lowshelf";
+      low.frequency.value = 140;
+      const mid = ctx.createBiquadFilter();
+      mid.type = "peaking";
+      mid.frequency.value = 800;
+      mid.Q.value = 0.8;
+      const presence = ctx.createBiquadFilter();
+      presence.type = "peaking";
+      presence.frequency.value = 2800;
+      presence.Q.value = 0.7;
+      const high = ctx.createBiquadFilter();
+      high.type = "highshelf";
+      high.frequency.value = 8000;
+      const lpf = ctx.createBiquadFilter();
+      lpf.type = "lowpass";
+      const gain = ctx.createGain();
+      const meter = ctx.createAnalyser();
+      meter.fftSize = 1024;
+      source.connect(hpf);
+      hpf.connect(gate);
+      gate.connect(comp);
+      comp.connect(low);
+      low.connect(mid);
+      mid.connect(presence);
+      presence.connect(high);
+      high.connect(lpf);
+      lpf.connect(gain);
+      gain.connect(ctx.destination);
+      source.connect(meter);
+      graph = { ctx, source, comp, presence, low, mid, high, hpf, lpf, gate, gain, meter };
+      audioRef.current = graph;
+      } catch {
+        return;
+      }
+    }
+    if (!graph) return;
+    const settings = shapedMix(mix, { low: eqLow, mid: eqMid, high: eqHigh }, denoise);
+    const now = graph.ctx.currentTime;
+    const glide = 0.08;
+    graph.comp.threshold.setTargetAtTime(settings.threshold, now, glide);
+    graph.comp.knee.setTargetAtTime(settings.knee, now, glide);
+    graph.comp.ratio.setTargetAtTime(settings.ratio, now, glide);
+    graph.comp.attack.setTargetAtTime(settings.attack, now, glide);
+    graph.comp.release.setTargetAtTime(settings.release, now, glide);
+    graph.presence.gain.setTargetAtTime(settings.presence, now, glide);
+    graph.low.gain.setTargetAtTime(settings.low, now, glide);
+    graph.mid.gain.setTargetAtTime(settings.mid, now, glide);
+    graph.high.gain.setTargetAtTime(settings.high, now, glide);
+    graph.hpf.frequency.setTargetAtTime(settings.hpf, now, glide);
+    graph.lpf.frequency.setTargetAtTime(settings.lpf, now, glide);
+    graph.gain.gain.setTargetAtTime(settings.makeup, now, glide);
+    if (!denoise) graph.gate.gain.setTargetAtTime(1, now, glide);
+    if (graph.ctx.state === "suspended") void graph.ctx.resume().catch(() => undefined);
+    if (!denoise) return;
+    const samples = new Float32Array(graph.meter.fftSize);
+    const timer = window.setInterval(() => {
+      const live = audioRef.current;
+      if (!live) return;
+      live.meter.getFloatTimeDomainData(samples);
+      const next = gateGain(noiseLevel(samples), settings.gate);
+      live.gate.gain.setTargetAtTime(next, live.ctx.currentTime, 0.05);
+    }, 80);
+    return () => window.clearInterval(timer);
+  }, [file, mix, denoise, eqLow, eqMid, eqHigh]);
+
+  useEffect(() => {
+    return () => {
+      void audioRef.current?.ctx.close();
+      audioRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    const stage = stageRef.current;
+    if (!video || !stage || !file || !ambience) {
+      stage?.style.removeProperty("--ambience");
+      return;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = 24;
+    canvas.height = 14;
+    const paint = canvas.getContext("2d", { willReadFrequently: true });
+    if (!paint) return;
+    const sample = () => {
+      if (video.readyState < 2) return;
+      try {
+        paint.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const [r, g, b] = averageColor(paint.getImageData(0, 0, canvas.width, canvas.height).data);
+        stage.style.setProperty("--ambience", `${r} ${g} ${b}`);
+      } catch {
+        stage.style.removeProperty("--ambience");
+      }
+    };
+    sample();
+    const timer = window.setInterval(sample, 800);
+    return () => window.clearInterval(timer);
+  }, [file, ambience, playingId]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -395,7 +583,7 @@ export function Player() {
 
   const missing = remotePending
     ? fit === "compatible"
-      ? "This file will not play as-is. Asking your server for a browser-friendly copy…"
+      ? "This file will not play as-is. CINEVO is making a browser-friendly copy…"
       : "Opening a private stream through CINEVO…"
     : remoteErr
       ? remoteErr
@@ -420,7 +608,7 @@ export function Player() {
         <video
           ref={videoRef}
           data-cinevo-player=""
-          src={file}
+          src={file && !converting ? file : undefined}
           className="player-video absolute inset-0 h-full w-full bg-cine-bg object-contain"
           playsInline
           preload="auto"
@@ -452,17 +640,18 @@ export function Player() {
             if (!blob && !remoteSrc) return;
             if (
               !blob &&
-              remoteSrc?.includes("/api/stream") &&
               fit === "original" &&
-              (title.source === "plex" || title.source === "jellyfin")
+              (title.source === "plex" || title.source === "jellyfin" || title.source === "folder")
             ) {
               setFit("compatible");
               setPlaybackFailed(false);
+              setRemoteErr("");
               return;
             }
             setPlaybackFailed(true);
             if (blob) setRemoteErr("This file could not be played in the browser.");
             else if (remoteSrc?.includes("/v1/play")) setRemoteErr("Could not play this file from Node on this computer.");
+            else if (fit === "compatible" && title.source === "folder") setRemoteErr("CINEVO could not convert this file. Install ffmpeg on the computer running CINEVO Node, then play it again.");
             else if (fit === "compatible") setRemoteErr("Your server could not make a browser-friendly copy of this file.");
             else setRemoteErr("CINEVO could not play this file through the proxy. The server has to be reachable from here.");
           }}
@@ -475,6 +664,7 @@ export function Player() {
       ) : (
         <img src={title.still || title.poster} alt="" className="absolute inset-0 h-full w-full object-cover" />
       )}
+      {file && ambience ? <div className="player-ambience" aria-hidden="true" /> : null}
       <BrandWatermark
         className={`absolute left-4 top-4 z-10 transition-opacity ${
           file && playing && !chrome ? "opacity-40" : "opacity-90"
@@ -497,7 +687,9 @@ export function Player() {
           <div>
             <dt>Quality</dt>
             <dd>
-              {fit === "compatible"
+              {fit === "compatible" && title.source === "folder"
+                ? "CINEVO conversion · H.264"
+                : fit === "compatible"
                 ? "Browser copy · your server"
                 : file?.startsWith("/api/stream")
                   ? "Original · proxied"
@@ -615,7 +807,9 @@ export function Player() {
       >
         <p className="font-ui text-xs font-medium tracking-[0.08em] text-cine-muted">
           {progress >= 100
-            ? "Finished · Play again from the start"
+            ? upcoming
+              ? "Finished · Next episode is ready"
+              : "Finished · Play again from the start"
             : file
               ? "Esc closes · Space pauses · I stats"
               : "Esc closes"}
@@ -664,6 +858,60 @@ export function Player() {
           </div>
         ) : null}
         {file ? (
+          <div className="player-mix" role="group" aria-label="Sound mix">
+            {(
+              [
+                ["premiere", "Premiere"],
+                ["night", "Night"],
+                ["dialogue", "Dialogue"],
+                ["flat", "Flat"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                className={mix === id ? "is-on" : undefined}
+                aria-pressed={mix === id}
+                onClick={() => patchPrefs({ mix: id })}
+              >
+                {label}
+              </button>
+            ))}
+            <button type="button" className={ambience ? "is-on" : undefined} aria-pressed={ambience} onClick={() => patchPrefs({ ambience: !ambience })}>
+              Lights
+            </button>
+            <button type="button" className={denoise ? "is-on" : undefined} aria-pressed={denoise} onClick={() => patchPrefs({ denoise: !denoise })}>
+              Denoise
+            </button>
+          </div>
+        ) : null}
+        {file ? (
+          <div className="player-eq" role="group" aria-label="Equalizer">
+            {(
+              [
+                ["eqLow", "Low", eqLow],
+                ["eqMid", "Mid", eqMid],
+                ["eqHigh", "Air", eqHigh],
+              ] as const
+            ).map(([key, label, value]) => (
+              <label key={key}>
+                <span>
+                  {label} {value > 0 ? `+${value}` : value}
+                </span>
+                <input
+                  type="range"
+                  min={-6}
+                  max={6}
+                  step={0.5}
+                  value={value}
+                  aria-label={`${label} equalizer`}
+                  onChange={(e) => patchPrefs({ [key]: Number(e.target.value) })}
+                />
+              </label>
+            ))}
+          </div>
+        ) : null}
+        {file ? (
           <div className="flex items-center gap-3 font-mono text-xs text-cine-muted">
             <span className="w-10 tabular-nums">{Math.round(progress)}%</span>
             <input
@@ -690,6 +938,17 @@ export function Player() {
                 {playing ? <Pause size={18} /> : <Play size={18} />}
               </button>
             ) : null}
+            {upcoming ? (
+              <button
+                type="button"
+                onClick={() => play(upcoming.id)}
+                aria-label={`Play next episode, ${upcoming.title}`}
+                className="flex h-11 items-center gap-1 px-2 font-ui text-sm text-cine-text"
+              >
+                <SkipForward size={18} />
+                Next
+              </button>
+            ) : null}
             <strong className="truncate font-ui text-lg font-semibold tracking-tight">{title.title}</strong>
           </div>
           <div className="flex max-w-full flex-wrap items-center justify-end text-cine-muted">
@@ -703,6 +962,7 @@ export function Player() {
                     const next = !muted;
                     setMuted(next);
                     if (videoRef.current) videoRef.current.muted = next;
+                    if (!next) void audioRef.current?.ctx.resume().catch(() => undefined);
                   }}
                 >
                   {muted ? <VolumeX size={18} /> : <Volume2 size={18} />}

@@ -1,4 +1,4 @@
-import { Clock3, Library, Play, Plus, Server, Settings2, Share2, Shuffle, Sparkles, Star } from "lucide-react";
+import { Clock3, ChevronLeft, Library, Play, Plus, Server, Settings2, Share2, Shuffle, Sparkles, Star } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   MOODS,
@@ -14,6 +14,9 @@ import { useCurrentUser } from "@/lib/auth/use-current-user";
 import { mostPlayed, tasteFrom } from "@/lib/house-tools";
 import { isLoopbackUrl } from "@/lib/playback-urls";
 import { useLibrary } from "@/lib/use-library";
+import { findFolder, mapFolderNetwork, titlesInFolder } from "@/lib/folder-map";
+import { episodeLabel, episodeMark, onDeck, organizeLibrary, type PlexShow } from "@/lib/plex-shelf";
+import { HouseCard } from "./onboarding";
 import { Rail, ArtImage, LibraryBoard } from "./poster";
 import { AddLibrary } from "./add-library";
 import { ToolsRoom } from "./tools-room";
@@ -237,6 +240,51 @@ function PlatformArc({ quiet = false }: { quiet?: boolean }) {
   );
 }
 
+function FolderNetwork({
+  titles,
+  extras,
+  value,
+  onChange,
+}: {
+  titles: { id: string; source?: string; sourceLabel?: string; path?: string; folder?: string }[];
+  extras: { sourceLabel: string; folders?: string[] }[];
+  value: string;
+  onChange: (path: string) => void;
+}) {
+  const trees = useMemo(() => mapFolderNetwork(titles, extras), [titles, extras]);
+  if (!trees.length) return null;
+  const crumbs = value.split("/").filter(Boolean);
+  const current = value ? findFolder(trees, value) : null;
+  const nodes = current ? current.children : trees;
+  return (
+    <div className="folder-network" aria-label="Folder network">
+      <div className="house-sources" role="tablist" aria-label="Folder path">
+        <button type="button" className={value ? "house-chip" : "house-chip is-on"} onClick={() => onChange("")}>
+          All folders
+        </button>
+        {crumbs.map((crumb, index) => {
+          const path = crumbs.slice(0, index + 1).join("/");
+          return (
+            <button key={path} type="button" className={path === value ? "house-chip is-on" : "house-chip"} onClick={() => onChange(path)}>
+              {crumb}
+            </button>
+          );
+        })}
+      </div>
+      {nodes.length ? (
+        <div className="house-sources" role="list" aria-label="Folders here">
+          {nodes.map((node) => (
+            <button key={node.path} type="button" className="house-chip" onClick={() => onChange(node.path)}>
+              {node.name}
+              <span className="folder-network__count">{node.count || node.children.length}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function StageRoom() {
   const play = useCinevo((s) => s.play);
   const openTitle = useCinevo((s) => s.openTitle);
@@ -258,6 +306,8 @@ export function StageRoom() {
   const collections = useCinevo((s) => s.collections);
   const hydrated = useCinevo((s) => s.hydrated);
   const library = useLibrary();
+  const [folder, setFolder] = useState("");
+  const visible = useMemo(() => titlesInFolder(library, folder), [library, folder]);
   const person = useCurrentUser();
   const hour = new Date().getHours();
   const hello =
@@ -265,17 +315,20 @@ export function StageRoom() {
   const rawName = person && !person.isDevFallback ? person.displayName?.split(" ")[0] : "";
   const who = rawName && !rawName.includes("@") && !/\d{4,}/.test(rawName) ? rawName : "";
 
-  const pool = byMood(mood, library);
-  const hero = pickFeatured({ mood, progress, tonight, pool: library });
+  const pool = byMood(mood, visible);
+  const hero = pickFeatured({ mood, progress, tonight, pool: visible.length ? visible : library });
   const heroProgress = hero ? progress[hero.id] ?? 0 : 0;
-  const continueWatching = library.filter((t) => {
+  const continueWatching = visible.filter((t) => {
     const p = progress[t.id];
     return p != null && p > 0 && p < 100;
   });
-  const added = recentlyAdded(12, pool);
-  const addedIds = new Set(added.map((t) => t.id));
-  const myList = library.filter((t) => favorites.includes(t.id));
-  const taste = useMemo(() => tasteFrom(library, favorites, progress), [library, favorites, progress]);
+  const shelf = useMemo(() => organizeLibrary(visible), [visible]);
+  const deck = useMemo(() => onDeck(shelf.shows, progress), [shelf.shows, progress]);
+  const addedMovies = recentlyAdded(12, byMood(mood, shelf.movies));
+  const addedTv = recentlyAdded(12, shelf.shows.flatMap((show) => show.episodes));
+  const addedIds = new Set(addedMovies.map((t) => t.id));
+  const myList = visible.filter((t) => favorites.includes(t.id));
+  const taste = useMemo(() => tasteFrom(visible, favorites, progress), [visible, favorites, progress]);
   const suggestions = useMemo(() => {
     const base = pool.filter((t) => !favorites.includes(t.id) && !addedIds.has(t.id));
     if (!taste.length) return base.slice(0, 12);
@@ -284,7 +337,7 @@ export function StageRoom() {
       (title.genres?.length ? title.genres : [title.genre]).reduce((n, genre) => n + (weight.get(genre) ?? 0), 0);
     return [...base].sort((a, b) => score(b) - score(a)).slice(0, 12);
   }, [pool, favorites, addedIds, taste]);
-  const played = useMemo(() => mostPlayed(library, plays, 10).map((row) => row.title), [library, plays]);
+  const played = useMemo(() => mostPlayed(visible, plays, 10).map((row) => row.title), [visible, plays]);
   const queued = tonight
     .map((id) => titleById(id))
     .filter((t): t is Title => Boolean(t));
@@ -392,13 +445,20 @@ export function StageRoom() {
                     </button>
                   ))}
                 </div>
+                <FolderNetwork
+                  titles={library}
+                  extras={sources.map((source) => ({ sourceLabel: source.name, folders: source.folders }))}
+                  value={folder}
+                  onChange={setFolder}
+                />
               </div>
 
               <div className="house-library">
+                <HouseCard />
                 <OsDeck
                   watching={continueWatching.length}
                   collections={collections.length}
-                  added={added.length}
+                  added={addedMovies.length}
                   link={link}
                   onWatch={() => (continueWatching[0] ? play(continueWatching[0].id) : setRoom("movies"))}
                   onCollections={() => setRoom("movies")}
@@ -407,9 +467,11 @@ export function StageRoom() {
                 />
                 <div className="house-rails">
                   {continueWatching.length ? <Rail heading="Continue watching" titles={continueWatching} wide /> : null}
+                  {deck.length ? <Rail heading="On deck" titles={deck} wide /> : null}
                   {queued.length ? <Rail heading="Up next" titles={queued} wide /> : null}
                   {played.length ? <Rail heading="Most played here" titles={played} /> : null}
-                  {added.length ? <Rail heading="Recently added" titles={added} /> : null}
+                  {addedMovies.length ? <Rail heading="Recently added movies" titles={addedMovies} /> : null}
+                  {addedTv.length ? <Rail heading="Recently added TV" titles={addedTv} /> : null}
                   {suggestions.length ? <Rail heading="For you" titles={suggestions} /> : null}
                   {myList.length ? <Rail heading="My List" titles={myList} /> : null}
                   {collections.map((collection) => {
@@ -425,6 +487,7 @@ export function StageRoom() {
             </>
           ) : (
             <div className="house-library">
+              <HouseCard />
               <PlatformArc />
             </div>
           )}
@@ -447,23 +510,124 @@ export function StageRoom() {
   );
 }
 
+function ShowWall({ shows, onOpen }: { shows: PlexShow[]; onOpen: (id: string) => void }) {
+  const play = useCinevo((s) => s.play);
+  const progress = useCinevo((s) => s.progress);
+  if (!shows.length) return null;
+  return (
+    <div className="poster-grid">
+      {shows.map((show) => {
+        const next = onDeck([show], progress)[0] || show.episodes[0];
+        return (
+          <article key={show.id} className="poster">
+            <div className="poster-frame">
+              <button type="button" className="block w-full" aria-label={`Open ${show.title}`} onClick={() => onOpen(show.id)}>
+                {show.poster ? (
+                  <img src={show.poster} alt="" className="aspect-2/3 w-full object-cover" />
+                ) : (
+                  <span className="poster-fallback">{show.title}</span>
+                )}
+              </button>
+              <button
+                type="button"
+                className="poster-play"
+                aria-label={`Play ${show.title}`}
+                onClick={() => (next ? play(next.id) : undefined)}
+              >
+                <Play size={16} fill="currentColor" />
+              </button>
+            </div>
+            <div className="poster-meta">
+              <button type="button" className="min-w-0 text-left" onClick={() => onOpen(show.id)}>
+                <h3>{show.title}</h3>
+                <p>
+                  {show.seasons.length} {show.seasons.length === 1 ? "season" : "seasons"} · {show.episodes.length} episodes
+                </p>
+              </button>
+            </div>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+function SeasonBrowser({ show, onBack }: { show: PlexShow; onBack: () => void }) {
+  const play = useCinevo((s) => s.play);
+  const openTitle = useCinevo((s) => s.openTitle);
+  const progress = useCinevo((s) => s.progress);
+  return (
+    <div className="show-seasons">
+      <button type="button" className="house-back" onClick={onBack}>
+        <ChevronLeft size={16} /> Shows
+      </button>
+      <header className="mt-4">
+        <h2>{show.title}</h2>
+        <p className="lede">
+          {show.year !== "—" ? `${show.year} · ` : ""}
+          {show.seasons.length} {show.seasons.length === 1 ? "season" : "seasons"} · {show.episodes.length} episodes
+        </p>
+      </header>
+      {show.seasons.map((season) => (
+        <section key={season.season} className="mt-8">
+          <h3 className="rail-heading">Season {season.season}</h3>
+          <div className="library-list">
+            {season.episodes.map((episode) => {
+              const mark = episodeMark(episode);
+              const seen = progress[episode.id];
+              return (
+                <article key={episode.id} className="library-row">
+                  <button type="button" className="library-row__open" onClick={() => openTitle(episode.id)}>
+                    <span>
+                      <h3>{mark ? episodeLabel(mark) : episode.title}</h3>
+                      <p>{[episode.runtime, episode.genre].filter(Boolean).join(" · ")}</p>
+                      {seen != null && seen > 0 ? (
+                        <i className="library-progress">
+                          <b style={{ width: `${Math.min(100, seen)}%` }} />
+                        </i>
+                      ) : null}
+                    </span>
+                  </button>
+                  <button type="button" className="house-btn house-btn--play" onClick={() => play(episode.id)}>
+                    <Play size={14} fill="currentColor" /> Play
+                  </button>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
 export function BrowseRoom({ kind: initialKind = "all" }: { kind?: "all" | "movie" | "series" }) {
   const [kind, setKind] = useState<"all" | "movie" | "series">(initialKind);
   const [genre, setGenre] = useState("All");
+  const [folder, setFolder] = useState("");
+  const [showId, setShowId] = useState<string | null>(null);
+  const sources = useCinevo((s) => s.sources);
   useEffect(() => {
     setKind(initialKind);
     setGenre("All");
+    setShowId(null);
   }, [initialKind]);
   const library = useLibrary();
-  const titles = useMemo(() => filterCatalog({ kind, genre, pool: library }), [kind, genre, library]);
+  const scoped = useMemo(() => titlesInFolder(filterCatalog({ genre, pool: library }), folder), [genre, library, folder]);
+  const shelf = useMemo(() => organizeLibrary(scoped), [scoped]);
+  useEffect(() => {
+    setShowId(null);
+  }, [folder, genre, kind]);
+  const show = shelf.shows.find((item) => item.id === showId) || null;
   const genres = genresIn(library);
-  const heading = initialKind === "movie" ? "Movies" : initialKind === "series" ? "TV Shows" : "Browse";
+  const heading = initialKind === "movie" ? "Movies" : initialKind === "series" ? "TV Shows" : "Library";
+  const empty = !shelf.movies.length && !shelf.shows.length;
   return (
     <div className="house-page library-os">
       <header>
         <BrandKicker>CINEVO library</BrandKicker>
         <h1>{heading}</h1>
-        <p className="lede">A poster wall you can filter, sort, and switch between grid, list, and hybrid.</p>
+        <p className="lede">Movies stay one poster. A show opens into seasons and episodes.</p>
       </header>
       <div className="command-strip">
         <div className="house-sources" role="tablist" aria-label="Kind">
@@ -476,7 +640,7 @@ export function BrowseRoom({ kind: initialKind = "all" }: { kind?: "all" | "movi
               onClick={() => setKind(k)}
               className={kind === k ? "house-chip is-on" : "house-chip"}
             >
-              {k === "all" ? "All" : k === "movie" ? "Movies" : "Series"}
+              {k === "all" ? "All" : k === "movie" ? "Movies" : "TV Shows"}
             </button>
           ))}
         </div>
@@ -496,11 +660,32 @@ export function BrowseRoom({ kind: initialKind = "all" }: { kind?: "all" | "movi
             ))}
           </div>
         ) : null}
+        <FolderNetwork
+          titles={library}
+          extras={sources.map((source) => ({ sourceLabel: source.name, folders: source.folders }))}
+          value={folder}
+          onChange={setFolder}
+        />
       </div>
-      <LibraryBoard
-        titles={titles}
-        empty="No titles yet. Import a library from Plex, Jellyfin, a folder, or Node."
-      />
+      {show && kind !== "movie" ? (
+        <SeasonBrowser show={show} onBack={() => setShowId(null)} />
+      ) : (
+        <>
+          {empty ? <p className="library-empty">No titles yet. Import a library from Plex, Jellyfin, a folder, or Node.</p> : null}
+          {kind !== "series" && shelf.movies.length ? (
+            <section>
+              {kind === "all" ? <h2 className="rail-heading">Movies</h2> : null}
+              <LibraryBoard titles={shelf.movies} />
+            </section>
+          ) : null}
+          {kind !== "movie" && shelf.shows.length ? (
+            <section className={kind === "all" ? "mt-10" : undefined}>
+              {kind === "all" ? <h2 className="rail-heading">TV Shows</h2> : null}
+              <ShowWall shows={shelf.shows} onOpen={setShowId} />
+            </section>
+          ) : null}
+        </>
+      )}
     </div>
   );
 }

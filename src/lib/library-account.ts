@@ -21,6 +21,14 @@ function asList<T>(value: unknown, max: number): T[] {
   return Array.isArray(value) ? (value.slice(0, max) as T[]) : [];
 }
 
+function lightTitles(value: unknown, max: number): LibraryTitle[] {
+  return asList<LibraryTitle>(value, max).map((title) => ({
+    ...title,
+    poster: title.poster?.startsWith("data:") ? "" : title.poster,
+    still: title.still?.startsWith("data:") ? "" : title.still,
+  }));
+}
+
 function clean(input: Partial<SavedLibrary>): SavedLibrary {
   return {
     plexToken: String(input.plexToken || "").slice(0, 400),
@@ -31,8 +39,8 @@ function clean(input: Partial<SavedLibrary>): SavedLibrary {
     nodeToken: String(input.nodeToken || "").slice(0, 400),
     nodeDevice: String(input.nodeDevice || "").slice(0, 80),
     sources: asList<LibSource>(input.sources, 40),
-    remoteTitles: asList<LibraryTitle>(input.remoteTitles, 400),
-    nodeTitles: asList<LibraryTitle>(input.nodeTitles, 200),
+    remoteTitles: lightTitles(input.remoteTitles, 2000),
+    nodeTitles: lightTitles(input.nodeTitles, 2000),
   };
 }
 
@@ -55,7 +63,7 @@ export const saveAccountLibrary = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const sql = await getSql();
     const payload = JSON.stringify(clean(data));
-    if (payload.length > 900_000) return { ok: false as const, error: "That library is too large to keep on the account." };
+    if (payload.length > 4_000_000) return { ok: false as const, error: "That library is too large to keep on the account." };
     await sql`
       insert into cinevo_libraries (user_id, payload, updated_at)
       values (${context.userId}, ${payload}, now())

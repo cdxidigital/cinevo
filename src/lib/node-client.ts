@@ -124,6 +124,7 @@ export async function addNodeFolder(base: string, token: string, folderPath: str
     id: String(data.id || ""),
     name: String(data.name || folderPath),
     titles: (data.titles as Array<Record<string, string>>) || [],
+    network: (data.network as string[]) || [],
     count: Number(data.count || 0),
   };
 }
@@ -136,9 +137,10 @@ export async function listNodeFolders(base: string, token: string) {
   return { ok: true as const, folders: (data.folders as Array<{ id: string; path: string; name: string; count: number }>) || [] };
 }
 
-export function nodePlayUrl(base: string, token: string, filePath: string, id?: string) {
+export function nodePlayUrl(base: string, token: string, filePath: string, id?: string, fit: "original" | "compatible" = "original") {
   const params = new URLSearchParams({ token, path: filePath });
   if (id) params.set("id", id);
+  if (fit === "compatible") params.set("fit", "compatible");
   return `${base.replace(/\/$/, "")}/v1/play?${params.toString()}`;
 }
 

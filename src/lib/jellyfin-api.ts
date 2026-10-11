@@ -6,6 +6,10 @@ type JellyfinItem = {
   Id?: string;
   Name?: string;
   Type?: string;
+  Path?: string;
+  SeriesName?: string;
+  ParentIndexNumber?: number;
+  IndexNumber?: number;
   ProductionYear?: number;
   PremiereDate?: string;
   Overview?: string;
@@ -141,47 +145,69 @@ export const jellyfinImportSections = createServerFn({ method: "POST" })
       director: string;
       sourceLabel: string;
       path: string;
+      folder: string;
     }[] = [];
+    const folders = new Set<string>();
+    const folderOf = (file: string) => {
+      const parts = file.replace(/\\/g, "/").split("/").filter(Boolean);
+      parts.pop();
+      return parts.join("/");
+    };
     try {
       for (const key of data.sectionKeys.slice(0, 12)) {
-        const params = new URLSearchParams({
-          ParentId: key,
-          IncludeItemTypes: "Movie,Series",
-          Recursive: "true",
-          Fields: "Overview,Genres,People,ProductionYear,PremiereDate,CommunityRating,RunTimeTicks,ImageTags,BackdropImageTags",
-          Limit: "80",
-          SortBy: "DateCreated",
-          SortOrder: "Descending",
-        });
-        const body = await jfFetch(
-          `${baseUrl}/Users/${encodeURIComponent(data.userId)}/Items?${params}`,
-          headers,
-          {},
-          12000,
-        );
-        const items = (Array.isArray(body.Items) ? body.Items : []) as JellyfinItem[];
-        for (const item of items.slice(0, 80)) {
-          const facts = factsFromJellyfin(item);
-          titles.push({
-            id: `jellyfin-${item.Id || item.Name}`,
-            title: String(item.Name || "Untitled"),
-            year: facts.year || (item.ProductionYear ? String(item.ProductionYear) : ""),
-            kind: String(item.Type || "") === "Series" ? "series" : "movie",
-            synopsis: facts.synopsis,
-            genre: facts.genre || "Jellyfin",
-            genres: facts.genres,
-            runtime: facts.runtime,
-            rating: facts.rating,
-            cast: facts.cast,
-            director: facts.director,
-            sourceLabel: data.sourceLabel,
-            path: String(item.Id || ""),
+        for (let start = 0; titles.length < 1600; start += 200) {
+          const params = new URLSearchParams({
+            ParentId: key,
+            IncludeItemTypes: "Movie,Episode",
+            Recursive: "true",
+            Fields: "Overview,Genres,People,Path,ProductionYear,PremiereDate,CommunityRating,RunTimeTicks,ImageTags,BackdropImageTags",
+            Limit: "200",
+            StartIndex: String(start),
+            SortBy: "SortName",
+            SortOrder: "Ascending",
           });
+          const body = await jfFetch(
+            `${baseUrl}/Users/${encodeURIComponent(data.userId)}/Items?${params}`,
+            headers,
+            {},
+            12000,
+          );
+          const items = (Array.isArray(body.Items) ? body.Items : []) as JellyfinItem[];
+          if (!items.length) break;
+          for (const item of items) {
+            const facts = factsFromJellyfin(item);
+            const episode = String(item.Type || "") === "Episode";
+            const season = Number(item.ParentIndexNumber || 0);
+            const index = Number(item.IndexNumber || 0);
+            const code = episode && (season || index) ? `S${String(season).padStart(2, "0")}E${String(index).padStart(2, "0")}` : "";
+            const title = episode
+              ? [item.SeriesName, code, item.Name].filter(Boolean).join(" · ")
+              : String(item.Name || "Untitled");
+            const folder = item.Path ? folderOf(item.Path) : "";
+            if (folder) folders.add(folder);
+            titles.push({
+              id: `jellyfin-${item.Id || item.Name}`,
+              title,
+              year: facts.year || (item.ProductionYear ? String(item.ProductionYear) : ""),
+              kind: episode ? "series" : "movie",
+              synopsis: facts.synopsis,
+              genre: facts.genre || "Jellyfin",
+              genres: facts.genres,
+              runtime: facts.runtime,
+              rating: facts.rating,
+              cast: facts.cast,
+              director: facts.director,
+              sourceLabel: data.sourceLabel,
+              path: String(item.Id || ""),
+              folder,
+            });
+          }
+          if (items.length < 200) break;
         }
       }
       const seen = new Set<string>();
       const unique = titles.filter((t) => (seen.has(t.id) ? false : (seen.add(t.id), true)));
-      return { ok: true as const, titles: unique };
+      return { ok: true as const, titles: unique.slice(0, 1600), folders: [...folders].slice(0, 400) };
     } catch (err) {
       return {
         ok: false as const,

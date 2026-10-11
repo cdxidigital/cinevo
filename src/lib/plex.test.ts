@@ -98,6 +98,27 @@ test("parses library sections and metadata", () => {
   assert.equal(titles[0].genre, "Crime");
   assert.equal(titles[1].kind, "series");
   assert.equal(titles[1].sourceLabel, "Home NAS");
+  const episode = parsePlexMetadata(
+    {
+      MediaContainer: {
+        Metadata: [
+          {
+            ratingKey: "101",
+            type: "episode",
+            title: "Rain",
+            grandparentTitle: "Show",
+            parentIndex: 1,
+            index: 2,
+            Media: [{ Part: [{ file: "/volume1/media/Shows/Show/Season 01/rain.mkv" }] }],
+          },
+        ],
+      },
+    },
+    "NAS",
+  );
+  assert.equal(episode[0].title, "Show · S01E02 · Rain");
+  assert.equal(episode[0].folder, "volume1/media/Shows/Show/Season 01");
+  assert.equal(episode[0].ratingKey, "101");
 });
 
 test("isPlexServer reads comma provides", () => {

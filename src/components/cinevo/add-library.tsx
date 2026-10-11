@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Cable, FolderPlus, HardDrive, Server, Trash2 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { addNodeFolder } from "@/lib/node-client";
-import { remoteTitle, scanFileList, isVideoFile, playableCount } from "@/lib/library";
+import { remoteTitle, scanFileList, isVideoFile, playableCount, FOLDER_SCAN_CAP } from "@/lib/library";
 import { enrichLocalStills } from "@/lib/local-stills";
 import { reconnectFolders, saveFolderHandle } from "@/lib/folder-handles";
 import { useCinevo } from "@/lib/cinevo-store";
@@ -59,7 +59,12 @@ export function AddLibrary() {
       count: titles.length,
     });
     void enrichLocalStills(titles, Array.from(files));
-    setMessage(`Indexed ${titles.length} files from ${folder}. Cover frames are taken from the files themselves.`);
+    const stopped = Array.from(files).filter((f) => isVideoFile(f.name) || isVideoFile(f.webkitRelativePath || "")).length > titles.length;
+    setMessage(
+      stopped
+        ? `Indexed the first ${titles.length} videos from ${folder}. Split a very large folder if more episodes remain.`
+        : `Indexed ${titles.length} files from ${folder}, including episodes in season folders.`,
+    );
   };
 
   const onFolder = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -116,6 +121,7 @@ export function AddLibrary() {
         genre: "Home library",
         genres: ["Home library", res.name],
         path: t.path,
+        folder: t.folder,
       }));
       addRemoteTitles(titles, {
         id: res.id,
@@ -125,6 +131,7 @@ export function AddLibrary() {
         baseUrl: nodeUrl,
         selected: true,
         count: res.count,
+        folders: res.network,
       });
       setFolderPath("");
       setMessage(`Scanned ${res.count} files on Node. Playback streams from that computer.`);
@@ -296,16 +303,19 @@ export function AddLibrary() {
   );
 }
 
-async function walkDir(dir: FileSystemDirectoryHandle, out: File[], depth = 0) {
-  if (depth > 6 || out.length > 80) return;
+async function walkDir(dir: FileSystemDirectoryHandle, out: File[], prefix = "", depth = 0) {
+  if (depth > 8 || out.length >= FOLDER_SCAN_CAP) return;
   // @ts-expect-error async iterator on directory handles
   for await (const entry of dir.values()) {
-    if (out.length > 80) return;
+    if (out.length >= FOLDER_SCAN_CAP) return;
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
     if (entry.kind === "file") {
+      if (!isVideoFile(entry.name)) continue;
       const file = await (entry as FileSystemFileHandle).getFile();
-      if (isVideoFile(file.name)) out.push(file);
+      Object.defineProperty(file, "webkitRelativePath", { value: rel });
+      out.push(file);
     } else if (entry.kind === "directory") {
-      await walkDir(entry as FileSystemDirectoryHandle, out, depth + 1);
+      await walkDir(entry as FileSystemDirectoryHandle, out, rel, depth + 1);
     }
   }
 }

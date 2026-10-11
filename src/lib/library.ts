@@ -14,12 +14,14 @@ export type LibSource = {
   userId?: string;
   selected: boolean;
   count: number;
+  folders?: string[];
 };
 
 export type LibraryTitle = Title & {
   source: SourceKind;
   sourceLabel: string;
   path?: string;
+  folder?: string;
 };
 
 const blobs = new Map<string, string>();
@@ -73,37 +75,83 @@ export function isVideoFile(name: string) {
 
 const ACCENTS: Accent[] = ["cyan", "magenta", "violet", "amber"];
 
+export const FOLDER_SCAN_CAP = 2000;
+
+function relativePath(file: File) {
+  return file.webkitRelativePath || file.name;
+}
+
+function isEpisodePath(rel: string) {
+  return episodeIdentity(rel) !== null;
+}
+
+export function episodeIdentity(rel: string): { season: number; episode: number } | null {
+  const normalized = rel.replace(/\\/g, "/");
+  const parts = normalized.split("/").filter(Boolean);
+  const file = parts.pop() || normalized;
+  const coded = /s(\d{1,2})e(\d{1,3})/i.exec(file) || /\b(\d{1,2})x(\d{1,3})\b/i.exec(file);
+  if (coded) return { season: Number(coded[1]), episode: Number(coded[2]) };
+  const parent = parts[parts.length - 1] || "";
+  const seasonFolder = /season\s*(\d{1,2})/i.exec(parent) || /^s(\d{1,2})$/i.exec(parent);
+  const fromFile = /(?:^|[^a-z])(?:episode|ep)[\s._-]*(\d{1,3})\b/i.exec(file) || /^e(\d{1,3})\b/i.exec(file) || /^(\d{1,3})(?:[\s._-]|$)/.exec(file.replace(/\.[^.]+$/, ""));
+  if (seasonFolder && fromFile) return { season: Number(seasonFolder[1]), episode: Number(fromFile[1]) };
+  return null;
+}
+
+function episodeDisplayTitle(rel: string, parsedTitle: string, folderName: string) {
+  const mark = episodeIdentity(rel);
+  if (!mark) return parsedTitle;
+  const code = `S${String(mark.season).padStart(2, "0")}E${String(mark.episode).padStart(2, "0")}`;
+  const parts = rel.replace(/\\/g, "/").split("/").filter(Boolean);
+  parts.pop();
+  const parent = parts[parts.length - 1] || "";
+  const show = /season|^s\d{1,2}$/i.test(parent) ? parts[parts.length - 2] || folderName : "";
+  let name = parsedTitle
+    .replace(/s\d{1,2}\s*e\d{1,3}/gi, " ")
+    .replace(/\b\d{1,2}\s*x\s*\d{1,3}\b/gi, " ")
+    .replace(/\b(?:episode|ep)\s*\d{1,3}\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (/^e\d{1,3}$/i.test(name)) name = "";
+  if (show && name.toLowerCase().startsWith(show.toLowerCase())) name = name.slice(show.length).trim();
+  const head = show ? `${show} · ${code}` : code;
+  return name ? `${head} · ${name}` : head;
+}
+
 export function titleFromFile(file: File, folderName: string, index: number): LibraryTitle {
+  const rel = relativePath(file);
   const parsed = parseFilename(file.name);
-  const id = `folder-${hash(`${folderName}:${file.name}:${file.size}`)}`;
-  const url = rememberBlob(id, file);
+  const series = isEpisodePath(rel);
+  const id = `folder-${hash(`${folderName}:${rel}:${file.size}`)}`;
+  rememberBlob(id, file);
   const accent = ACCENTS[index % ACCENTS.length];
+  const title = series ? episodeDisplayTitle(rel, parsed.title, folderName) : parsed.title;
   return {
     id,
-    title: parsed.title,
-    kind: /s\d{2}e\d{2}/i.test(file.name) ? "series" : "movie",
+    title,
+    kind: series ? "series" : "movie",
     year: parsed.year || "—",
     runtime: file.size > 2_000_000_000 ? "2h+" : file.size > 700_000_000 ? "~2h" : "~90m",
-    genre: "Home library",
-    genres: ["Home library", folderName],
+    genre: series ? "Series" : "Home library",
+    genres: [series ? "Series" : "Home library", folderName],
     synopsis: `Imported from ${folderName}. File stays on this device — CINEVO only indexes the name.`,
     cast: [],
     director: folderName,
     rating: 0,
     addedAt: new Date().toISOString().slice(0, 10),
-    poster: makePoster(parsed.title, accent),
+    poster: index < 48 ? makePoster(title, accent) : "/stills/theater.jpg",
     still: "/stills/theater.jpg",
     accent,
     source: "folder",
     sourceLabel: folderName,
-    path: file.name,
+    path: rel,
   };
 }
 
 export function scanFileList(files: FileList | File[], folderName = "Home folder"): LibraryTitle[] {
   const list = Array.from(files).filter((f) => isVideoFile(f.name) || isVideoFile(f.webkitRelativePath || ""));
   const name = folderName || guessFolder(list) || "Home folder";
-  return list.slice(0, 80).map((file, i) => titleFromFile(file, name, i));
+  return list.slice(0, FOLDER_SCAN_CAP).map((file, i) => titleFromFile(file, name, i));
 }
 
 function guessFolder(files: File[]) {
@@ -170,6 +218,7 @@ export function remoteTitle(input: {
   genre?: string;
   genres?: string[];
   path?: string;
+  folder?: string;
   runtime?: string;
   rating?: number;
   cast?: string[];
@@ -203,6 +252,7 @@ export function remoteTitle(input: {
     source: input.source,
     sourceLabel: input.sourceLabel,
     path: input.path,
+    folder: input.folder,
   };
 }
 

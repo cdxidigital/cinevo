@@ -30,7 +30,7 @@ export async function createTicket(input: {
       ? plexStreamTarget(uri, key, token, clientId, fit)
       : input.provider === "jellyfin"
         ? jellyfinStreamTarget(uri, key, token, clientId, fit)
-        : nodeStreamTarget(uri, token, key, clientId);
+        : nodeStreamTarget(uri, token, key, clientId, fit);
   const id = ticketId();
   const expires = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
   const sql = await getSql();

@@ -2,6 +2,7 @@ import { genericOAuthClient } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/react";
 import { runPreSignInSignOut, runSignOut } from "../../../scripts/sign-out-plan.mjs";
 import { GROK_PROVIDERS } from "./providers";
+import { useCinevo } from "../cinevo-store";
 
 /**
  * Better Auth client for this React SPA (browser-side).
@@ -145,7 +146,10 @@ export async function signIn(
       livePreview: inLivePreview() || useOAuthPopup(),
       hasBearer: Boolean(getBearerToken()),
       requestSignOut: () => authClient.signOut(),
-      clearToken: () => setBearerToken(null),
+      clearToken: () => {
+        setBearerToken(null);
+        useCinevo.getState().clearLocalData();
+      },
     });
     setBearerToken(result.token);
     // Refresh the client session store with the bearer attached (onRequest).
@@ -258,7 +262,10 @@ export async function signOut(redirectTo = "/"): Promise<void> {
       const { error } = await authClient.signOut();
       if (error) throw new Error(error.message ?? "Sign-out failed");
     },
-    clearToken: () => setBearerToken(null),
+    clearToken: () => {
+      setBearerToken(null);
+      useCinevo.getState().clearLocalData();
+    },
     redirect: () => {
       window.location.href = redirectTo;
     },

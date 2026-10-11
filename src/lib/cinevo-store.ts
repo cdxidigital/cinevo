@@ -775,6 +775,8 @@ export const useCinevo = create<CinevoState>()(
           noticesOpen: false,
           nodeToken: "",
           nodeDevice: "",
+          plexClientId: "",
+          libraryOwner: "",
           plexToken: "",
           plexUser: "",
           plexServers: [],
@@ -789,6 +791,7 @@ export const useCinevo = create<CinevoState>()(
         try {
           localStorage.removeItem("cinevo-state");
           localStorage.removeItem("cinevo-storage");
+          localStorage.removeItem("cinevo-local-v4");
         } catch {
           /* ignore quota / private mode */
         }

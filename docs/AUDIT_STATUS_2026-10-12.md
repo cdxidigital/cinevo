@@ -13,14 +13,19 @@ The following **targeted isolated local tests** passed:
 
 - Range parser: 14 tests passed
 - Resolved-IP filter: 11 tests passed
-- Total isolated helper tests: 25 passed, zero failures
+- WebAuthn crypto checks: 8 passed (3 existing, 5 new rejection tests)
+- Total isolated helper and WebAuthn tests: **33 passed, zero failures**
+- Source-inventory check: all 24 test paths explicitly named in `npm test` exist
+- Node integration suite test harness: isolated test ports and test-only configuration directories; corrected expected foreign-origin response code. Full Node integration run is still outstanding.
 
 These are tests of isolated copies of helper logic, **not a whole-repository
 `npm test` result**. The repository could not be cloned or dependencies
 installed in the local execution environment, which has no outbound network.
 
-The GitHub Actions job `Cinevo quality and security` fails immediately,
-returning no executable step list and no retrievable job logs. Its cause is
+The GitHub Actions job `Cinevo quality and security` still fails before
+running any executable test step, returning no step list or retrievable job logs.
+The check-run metadata reports two annotations, but the connected GitHub tool
+cannot retrieve their contents. Its cause is
 not proven. This cannot be represented as an ESLint, TypeScript, npm, or
 application-test failure, because those steps did not report running.
 
@@ -40,13 +45,16 @@ native APK install, signing and signing rotation remain **unverified**.
 - Added source signing-material guard plus GitHub Actions checks for build,
   typecheck, lint and application tests.
 - Protected CINEVO Node's admin UI, local-only settings, pair rate limits
-  and browser-origin access.
+  and browser-origin access. Updated its integration tests to use separate
+  ports and test configuration, and to expect HTTP 403 for forbidden origins.
 - Corrected byte-range and HEAD responses, multi-folder preservation,
   and symlink escapes outside approved media folders.
 - Blocked known private/metadata cloud egress destinations, added DNS-IP
   checks and blocked credential-bearing cross-origin redirects.
 - Hardened WebAuthn relying-party origin checks and blocked unauthenticated
   email-claim passkey enrollment and cross-provider unverified linking.
+  Added tested rejection cases for replay, origin mismatch, RP-hash mismatch,
+  missing user presence and modified signatures.
 - Made QR login approval single-use with an atomic claim.
 - Cleared previous-account browser data on identity changes.
 - Protected AI attendant requests with authentication, persisted consent,

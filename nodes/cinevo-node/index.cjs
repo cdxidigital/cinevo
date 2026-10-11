@@ -22,6 +22,9 @@ const CODE_TTL_MS = 10 * 60 * 1000;
 const SESSION_TTL_MS = 4 * 60 * 60 * 1000;
 
 function configDir() {
+  // Allows test runs (and managed installations) to keep their private config
+  // isolated instead of writing into an operator's actual home profile.
+  if (process.env.CINEVO_NODE_CONFIG_DIR) return path.resolve(process.env.CINEVO_NODE_CONFIG_DIR);
   const home = os.homedir();
   if (process.platform === "darwin") {
     return path.join(home, "Library", "Application Support", "CINEVO Node");

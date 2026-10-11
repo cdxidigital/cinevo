@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { once } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,12 +7,26 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
-const PORT = 48185;
+// Each test gets its own port and private config, independent of other tests
+// and independent of a developer's actual paired media server.
+let nextPort = 48185;
 
-function start() {
+function start(t) {
+  const port = nextPort++;
+  const privateConfig = fs.mkdtempSync(path.join(os.tmpdir(), "cinevo-node-test-config-"));
   const child = spawn(process.execPath, [path.join(root, "index.cjs"), "--no-open"], {
-    env: { ...process.env, CINEVO_NODE_PORT: String(PORT) },
+    env: {
+      ...process.env,
+      CINEVO_NODE_PORT: String(port),
+      CINEVO_NODE_HOST: "127.0.0.1",
+      CINEVO_NODE_CONFIG_DIR: privateConfig,
+    },
     stdio: ["ignore", "pipe", "pipe"],
+  });
+  child.testPort = port;
+  t.after(() => {
+    if (child.exitCode === null) child.kill("SIGTERM");
+    fs.rmSync(privateConfig, { recursive: true, force: true });
   });
   return child;
 }
@@ -39,11 +52,10 @@ async function waitReady(child) {
 }
 
 test("loopback health, pair, and 401 without bearer", async (t) => {
-  const child = start();
-  t.after(() => child.kill("SIGTERM"));
+  const child = start(t);
   const codes = await waitReady(child);
   const code = codes.pair;
-  const base = `http://127.0.0.1:${PORT}`;
+  const base = `http://127.0.0.1:${child.testPort}`;
 
   const health = await (await fetch(`${base}/health`)).json();
   assert.equal(health.ok, true);
@@ -140,10 +152,9 @@ test("loopback health, pair, and 401 without bearer", async (t) => {
 
 
 test("dashboard pairing secrets cannot be read by a foreign website", async (t) => {
-  const child = start();
-  t.after(() => child.kill("SIGTERM"));
+  const child = start(t);
   await waitReady(child);
-  const base = `http://127.0.0.1:${PORT}`;
+  const base = `http://127.0.0.1:${child.testPort}`;
   const foreign = await fetch(base + "/dashboard", { headers: { Origin: "https://untrusted.example" } });
   assert.equal(foreign.status, 403);
   const local = await fetch(base + "/dashboard", { headers: { Origin: base } });
@@ -154,14 +165,13 @@ test("dashboard pairing secrets cannot be read by a foreign website", async (t) 
     headers: { "Content-Type": "application/json", "X-Cinevo-Local": "dashboard", Origin: "https://untrusted.example" },
     body: JSON.stringify({ provider: "preview" }),
   });
-  assert.equal(forged.status, 401);
+  assert.equal(forged.status, 403);
 });
 
 test("file HTTP ranges handle suffix, reversal and HEAD correctly", async (t) => {
-  const child = start();
-  t.after(() => child.kill("SIGTERM"));
+  const child = start(t);
   const { pair } = await waitReady(child);
-  const base = `http://127.0.0.1:${PORT}`;
+  const base = `http://127.0.0.1:${child.testPort}`;
   const joined = await fetch(base + "/v1/pair", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: pair }),
   });
@@ -190,10 +200,9 @@ test("file HTTP ranges handle suffix, reversal and HEAD correctly", async (t) =>
 });
 
 test("a symlink in an indexed folder cannot escape the approved media root", async (t) => {
-  const child = start();
-  t.after(() => child.kill("SIGTERM"));
+  const child = start(t);
   const { pair } = await waitReady(child);
-  const base = `http://127.0.0.1:${PORT}`;
+  const base = `http://127.0.0.1:${child.testPort}`;
   const joined = await fetch(base + "/v1/pair", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: pair }),
   });
@@ -217,10 +226,9 @@ test("a symlink in an indexed folder cannot escape the approved media root", asy
 });
 
 test("untrusted sites cannot pair even with an otherwise valid code", async (t) => {
-  const child = start();
-  t.after(() => child.kill("SIGTERM"));
+  const child = start(t);
   const { pair } = await waitReady(child);
-  const base = `http://127.0.0.1:${PORT}`;
+  const base = `http://127.0.0.1:${child.testPort}`;
   const foreign = await fetch(base + "/v1/pair", {
     method: "POST",
     headers: { Origin: "https://untrusted.example", "Content-Type": "application/json" },

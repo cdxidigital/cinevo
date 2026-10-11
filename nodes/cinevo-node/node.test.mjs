@@ -215,3 +215,22 @@ test("a symlink in an indexed folder cannot escape the approved media root", asy
   const leaked = await fetch(base + "/v1/play?token=" + encodeURIComponent(token) + "&path=" + encodeURIComponent(link));
   assert.equal(leaked.status, 404);
 });
+
+test("untrusted sites cannot pair even with an otherwise valid code", async (t) => {
+  const child = start();
+  t.after(() => child.kill("SIGTERM"));
+  const { pair } = await waitReady(child);
+  const base = `http://127.0.0.1:${PORT}`;
+  const foreign = await fetch(base + "/v1/pair", {
+    method: "POST",
+    headers: { Origin: "https://untrusted.example", "Content-Type": "application/json" },
+    body: JSON.stringify({ code: pair }),
+  });
+  assert.equal(foreign.status, 403);
+  const legit = await fetch(base + "/v1/pair", {
+    method: "POST",
+    headers: { Origin: "https://cinevo.fourtee2.digital", "Content-Type": "application/json" },
+    body: JSON.stringify({ code: pair }),
+  });
+  assert.equal(legit.status, 200);
+});

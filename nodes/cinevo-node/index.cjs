@@ -189,6 +189,20 @@ function rotateCode() {
   state.codeExpires = Date.now() + CODE_TTL_MS;
 }
 
+function trustedBrowserOrigin(value) {
+  if (!value) return true;
+  let origin;
+  try { origin = new URL(String(value)).origin; } catch { return false; }
+  const allowed = new Set([
+    "https://cinevo.fourtee2.digital",
+    "http://localhost:8080", "http://127.0.0.1:8080",
+    `http://localhost:${PORT}`, `http://127.0.0.1:${PORT}`,
+    ...String(process.env.CINEVO_NODE_ALLOWED_ORIGINS || "")
+      .split(",").map((item) => item.trim()).filter(Boolean),
+  ]);
+  return allowed.has(origin);
+}
+
 function localDashboardAccess(req) {
   // The physical machine controls pairing secrets and unpaired settings.
   // Never trust a caller-supplied header to authenticate a dashboard operation.
@@ -869,6 +883,15 @@ async function importSections(conn, keys) {
 
 async function handle(req, res) {
   const url = new URL(req.url || "/", `http://${HOST}:${PORT}`);
+  // Reject scripted requests from unrelated websites even when a user has
+  // paired locally. Non-browser clients still need a valid bearer session.
+  if (!trustedBrowserOrigin(req.headers.origin)) {
+    send(res, 403, { error: "This website is not allowed to control CINEVO Node." }, {
+      "Access-Control-Allow-Origin": "null",
+      "Access-Control-Allow-Private-Network": "false",
+    });
+    return;
+  }
   if (req.method === "OPTIONS") {
     send(res, 204, "");
     return;

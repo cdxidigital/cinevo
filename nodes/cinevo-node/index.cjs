@@ -314,7 +314,16 @@ function contained(root, target) {
 }
 
 function underScannedFolder(filePath) {
-  return (state.config.folders || []).some((f) => contained(f.path, filePath));
+  // A symlink under an approved folder must never escape into unrelated files.
+  let realTarget;
+  try { realTarget = fs.realpathSync(filePath); } catch { return false; }
+  return (state.config.folders || []).some((folder) => {
+    try {
+      return contained(fs.realpathSync(folder.path), realTarget);
+    } catch {
+      return false;
+    }
+  });
 }
 
 function findPlayPath(id, rawPath) {

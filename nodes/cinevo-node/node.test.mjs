@@ -188,3 +188,30 @@ test("file HTTP ranges handle suffix, reversal and HEAD correctly", async (t) =>
   assert.equal(head.headers.get("content-length"), "3");
   assert.equal(head.headers.get("content-range"), "bytes 3-5/10");
 });
+
+test("a symlink in an indexed folder cannot escape the approved media root", async (t) => {
+  const child = start();
+  t.after(() => child.kill("SIGTERM"));
+  const { pair } = await waitReady(child);
+  const base = `http://127.0.0.1:${PORT}`;
+  const joined = await fetch(base + "/v1/pair", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: pair }),
+  });
+  assert.equal(joined.status, 200);
+  const { token } = await joined.json();
+  const privateDir = fs.mkdtempSync(path.join(os.tmpdir(), "cinevo-not-scanned-"));
+  const mediaDir = fs.mkdtempSync(path.join(os.tmpdir(), "cinevo-indexed-"));
+  t.after(() => { fs.rmSync(privateDir, { recursive: true, force: true }); fs.rmSync(mediaDir, { recursive: true, force: true }); });
+  const target = path.join(privateDir, "private.mp4");
+  fs.writeFileSync(target, "NOT PART OF THIS LIBRARY");
+  const link = path.join(mediaDir, "linked.mp4");
+  fs.symlinkSync(target, link);
+  const allowed = await fetch(base + "/v1/folders", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ path: mediaDir }),
+  });
+  assert.equal(allowed.status, 200);
+  const leaked = await fetch(base + "/v1/play?token=" + encodeURIComponent(token) + "&path=" + encodeURIComponent(link));
+  assert.equal(leaked.status, 404);
+});

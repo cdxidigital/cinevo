@@ -26,6 +26,20 @@ for (const path of paths) {
   }
   if (/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----/.test(content)) exposed.push(path);
 }
+// Old native packages must not reappear while signing credentials are under
+// rotation. This also covers accidental re-adds despite .gitignore.
+const releaseManifest = "public/installers/manifest.json";
+try {
+  const manifest = JSON.parse(readFileSync(releaseManifest, "utf8"));
+  if (manifest.status === "release-security-hold") {
+    for (const path of paths) {
+      if (/^public\/installers\/[^/]+\.(?:apk|zip|exe|dmg|msi)$/i.test(path)) exposed.push(path);
+    }
+  }
+} catch {
+  exposed.push(releaseManifest);
+}
+
 if (exposed.length) {
   console.error("Tracked private signing material detected. Remove these files from Git tracking:");
   for (const path of exposed) console.error(" -", path);

@@ -43,9 +43,13 @@ async function fetchMedia(url: string, headers: Headers, method: "GET" | "HEAD")
     const location = upstream.headers.get("location");
     await upstream.body?.cancel();
     if (!location) return upstream;
-    current = rewriteLoopback(location, current);
+    const next = rewriteLoopback(location, current);
+    if (new URL(next).origin !== new URL(url).origin) {
+      throw new Error("Cross-origin media redirects are not allowed.");
+    }
+    current = next;
   }
-  return fetch(current, { method, headers, redirect: "follow" });
+  throw new Error("Media server redirected too many times.");
 }
 
 function passHeaders(upstream: Response, download: boolean, live: boolean) {

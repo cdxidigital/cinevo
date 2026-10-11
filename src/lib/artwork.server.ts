@@ -52,7 +52,7 @@ async function plexItems(uri: string, token: string, clientId: string, keys: str
     const chunk = keys.slice(i, i + 20).map((key) => key.replace(/^plex-/, "")).filter(Boolean);
     if (!chunk.length) continue;
     try {
-      const res = await fetch(`${uri}/library/metadata/${chunk.join(",")}`, { headers, signal: AbortSignal.timeout(12000) });
+      const res = await fetch(`${uri}/library/metadata/${chunk.join(",")}`, { headers, redirect: "error", signal: AbortSignal.timeout(12000) });
       if (!res.ok) continue;
       const body = (await res.json()) as unknown;
       for (const row of parsePlexMetadata(body, "")) {
@@ -89,7 +89,7 @@ async function jellyfinItems(uri: string, token: string, clientId: string, userI
   });
   const path = userId ? `/Users/${encodeURIComponent(userId)}/Items?${params}` : `/Items?${params}`;
   try {
-    const res = await fetch(`${uri}${path}`, { headers, signal: AbortSignal.timeout(12000) });
+    const res = await fetch(`${uri}${path}`, { headers, redirect: "error", signal: AbortSignal.timeout(12000) });
     if (!res.ok) return [];
     const body = (await res.json()) as { Items?: unknown[] };
     return (body.Items || []).slice(0, 80).map((item) => {
@@ -113,6 +113,8 @@ export async function refreshArtwork(input: {
   ticket?: string;
 }) {
   const uri = input.uri.trim().replace(/\/$/, "");
+  const blocked = serverAddressError(uri);
+  if (blocked) return { ok: false as const, error: blocked };
   let ticketId = input.ticket?.trim() || "";
   if (ticketId) {
     const sql = await getSql();

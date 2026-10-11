@@ -53,7 +53,7 @@ test("loopback and blocked addresses", () => {
   assert.equal(isLoopbackUrl("https://plex.example:32400"), false);
   assert.equal(serverAddressError("file:///etc/passwd"), "That server address is not allowed.");
   assert.equal(serverAddressError("http://169.254.169.254/"), "That server address is not allowed.");
-  assert.equal(serverAddressError("http://192.168.1.20:32400"), null);
+  assert.equal(serverAddressError("http://192.168.1.20:32400"), "That server address is not allowed.");
   const local = new URL(plexStreamTarget("http://192.168.1.20:32400", "12", "token", "client").url);
   assert.equal(local.searchParams.get("location"), "lan");
 });
@@ -81,4 +81,20 @@ test("a failed browser play can ask the server for an H.264 copy", () => {
   assert.equal(jellyfin.searchParams.get("TranscodingContainer"), "mp4");
   assert.equal(jellyfin.searchParams.get("AllowVideoStreamCopy"), "false");
   assert.equal(jellyfin.searchParams.get("MaxStreamingBitrate"), "12000000");
+});
+
+test("cloud media URL guard refuses internal, obscure IP and credential-bearing targets", () => {
+  const blocked = [
+    "http://localhost:48184", "http://127.0.0.1:48184", "http://2130706433",
+    "http://0x7f000001", "http://[::ffff:127.0.0.1]/",
+    "http://169.254.169.254/latest/meta-data/",
+    "http://10.1.1.10", "http://172.17.0.1", "http://192.168.4.15",
+    "http://100.100.100.200", "http://nas.local:48184",
+    "http://metadata.google.internal/", "http://user:password@public.example/",
+    "file:///etc/passwd",
+  ];
+  for (const target of blocked) {
+    assert.equal(serverAddressError(target), "That server address is not allowed.", target);
+  }
+  assert.equal(serverAddressError("https://plex.example:32400"), null);
 });

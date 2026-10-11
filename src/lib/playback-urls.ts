@@ -8,7 +8,9 @@ export function isLoopbackUrl(url?: string) {
   }
 }
 
-/** Reject schemes and cloud-metadata hosts. Private LAN addresses stay allowed. */
+/** Public cloud egress must not reach local/LAN or metadata endpoints.
+ * Local private servers require a separately configured, trusted LAN gateway.
+ * DNS resolution must ALSO be checked on the server before real fetches. */
 export function serverAddressError(uri: string) {
   let url: URL;
   try {
@@ -17,8 +19,23 @@ export function serverAddressError(uri: string) {
     return "That server address is not allowed.";
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") return "That server address is not allowed.";
-  const host = url.hostname.toLowerCase();
-  if (host === "169.254.169.254" || host === "metadata.google.internal") return "That server address is not allowed.";
+  if (url.username || url.password) return "That server address is not allowed.";
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  if (!host || host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") ||
+      host.endsWith(".internal") || host.endsWith(".lan") || host.endsWith(".home.arpa") ||
+      host === "metadata.google.internal" || host.includes(":")) return "That server address is not allowed.";
+  if (/^\d+$/.test(host)) return "That server address is not allowed.";
+  const ip = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(host);
+  if (ip) {
+    const [a, b, c, fourth] = ip.slice(1).map(Number);
+    if ([a,b,c,fourth].some(n => n < 0 || n > 255)) return "That server address is not allowed.";
+    if (a === 0 || a === 10 || a === 127 || a >= 224 ||
+        (a === 100 && b >= 64 && b <= 127) ||
+        (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) ||
+        (a === 192 && (b === 168 || (b === 0 && c === 0))) ||
+        (a === 198 && (b === 18 || b === 19))) return "That server address is not allowed.";
+  }
+  if (host === "169.254.169.254") return "That server address is not allowed.";
   return null;
 }
 

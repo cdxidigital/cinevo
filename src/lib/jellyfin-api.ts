@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
+import { serverAddressError } from "@/lib/playback-urls";
 import { factsFromJellyfin } from "@/lib/artwork-model";
 
 type JellyfinItem = {
@@ -34,7 +35,9 @@ function authHeader(deviceId: string, token?: string) {
 }
 
 async function jfFetch(url: string, headers: Record<string, string>, init: RequestInit = {}, ms = 10000) {
+  if (serverAddressError(url)) throw new Error("That Jellyfin server address is not allowed.");
   const res = await fetch(url, {
+    redirect: "error",
     ...init,
     headers: { ...headers, ...(init.headers as Record<string, string> | undefined) },
     signal: AbortSignal.timeout(ms),

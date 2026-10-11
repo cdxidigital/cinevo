@@ -89,7 +89,6 @@ export async function registerPasskey(request: Request, body: {
   const where = pageOrigin(request);
   if (!where) throw new Error("This page could not confirm its address. Reload and try again.");
   const email = (body.email || "").trim().toLowerCase();
-  const name = (body.name || "").trim() || email.split("@")[0] || "Member";
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Enter the email for this house.");
   if (!body.challengeId || !body.credentialId || !body.publicKey || !body.clientDataJSON || !body.authenticatorData || !body.signature) {
     throw new Error("Passkey response was incomplete.");

@@ -15,7 +15,7 @@ export const Route = createFileRoute("/api/art/$ticket")({
         try {
           upstream = await fetch(`${base}${path}`, {
             headers: ticket.headers,
-            redirect: "follow",
+            redirect: "error",
             signal: AbortSignal.timeout(12000),
           });
         } catch {

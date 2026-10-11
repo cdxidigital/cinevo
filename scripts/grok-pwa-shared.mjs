@@ -54,10 +54,20 @@ function placeholderCardColor(site = {}) {
   return /^[0-9a-fA-F]{6}$/.test(hex) ? hex : "";
 }
 
+function siteTitle(cwd = process.cwd()) {
+  try {
+    const site = JSON.parse(readFileSync(join(cwd, OG_SITE_REL_PATH), "utf8"));
+    return String(site.title ?? "").trim();
+  } catch {
+    return "";
+  }
+}
+
 /**
  * "wild-race.grok.me" → "Wild Race". Only published app hosts encode the
  * display name in the first label. Preview / guest hosts are image origins
  * only — slugifying them produced internal names like "Hds Abc 3000 Xy".
+ * Those use the house title from site.json (CINEVO) instead of "Grok App".
  */
 export function appNameFromHost(hostHeader) {
   const host = String(hostHeader ?? "")
@@ -66,11 +76,11 @@ export function appNameFromHost(hostHeader) {
     .split(":")[0]
     .toLowerCase();
   if (!host.endsWith(".grok.me")) {
-    return DEFAULT_APP_NAME;
+    return host ? siteTitle() || DEFAULT_APP_NAME : DEFAULT_APP_NAME;
   }
   const slug = host.split(".")[0] ?? "";
   if (!slug || slug === "www" || !/^[a-z0-9-]{1,63}$/.test(slug)) {
-    return DEFAULT_APP_NAME;
+    return siteTitle() || DEFAULT_APP_NAME;
   }
   return (
     slug
@@ -159,23 +169,35 @@ export function renderInstallPageHtml(template, { host, url } = {}) {
 
 export function renderWebManifest(hostHeader) {
   const name = appNameFromHost(hostHeader);
+  const host = String(hostHeader ?? "")
+    .split(",")[0]
+    .trim()
+    .split(":")[0]
+    .toLowerCase();
+  const house = Boolean(host) && !host.endsWith(".grok.me");
   return JSON.stringify(
     {
       name,
       short_name: name,
       id: "/",
-      start_url: "/",
+      start_url: house ? "/app" : "/",
       scope: "/",
       display: "standalone",
       background_color: "#000000",
       theme_color: "#000000",
-      icons: [
-        {
-          src: "/__grok/icon-180.png",
-          sizes: "180x180",
-          type: "image/png",
-        },
-      ],
+      icons: house
+        ? [
+            { src: "/__grok/icon-180.png", sizes: "180x180", type: "image/png", purpose: "any" },
+            { src: "/__grok/icon-180.png", sizes: "512x512", type: "image/png", purpose: "any" },
+            { src: "/__grok/icon-180.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+          ]
+        : [
+            {
+              src: "/__grok/icon-180.png",
+              sizes: "180x180",
+              type: "image/png",
+            },
+          ],
     },
     null,
     2,

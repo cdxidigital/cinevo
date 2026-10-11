@@ -8,6 +8,16 @@ export function isLoopbackUrl(url?: string) {
   }
 }
 
+/** Only true loopback hosts get browsers' local secure-context exception. */
+export function isSecureLoopbackUrl(uri: string): boolean {
+  try {
+    const host = new URL(uri).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    return host === "localhost" || host === "127.0.0.1" || host === "::1";
+  } catch {
+    return false;
+  }
+}
+
 export function isPrivateLanNodeUrl(uri: string): boolean {
   try {
     const host = new URL(uri).hostname.toLowerCase().replace(/^\[|\]$/g, "");

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   isLoopbackUrl,
   isPrivateLanNodeUrl,
+  isSecureLoopbackUrl,
   jellyfinStreamTarget,
   nodeStreamTarget,
   plexStreamTarget,
@@ -116,4 +117,11 @@ test("LAN Node addresses are routed locally, not through the public cloud", () =
   assert.equal(isPrivateLanNodeUrl("http://nas.local:48184"), true);
   assert.equal(isPrivateLanNodeUrl("http://127.0.0.1:48184"), true);
   assert.equal(isPrivateLanNodeUrl("https://media.example.net"), false);
+});
+
+test("HTTP mixed-content exception applies to true loopback but not LAN mDNS", () => {
+  assert.equal(isSecureLoopbackUrl("http://127.0.0.1:48184"), true);
+  assert.equal(isSecureLoopbackUrl("http://localhost:48184"), true);
+  assert.equal(isSecureLoopbackUrl("http://nas.local:48184"), false);
+  assert.equal(isSecureLoopbackUrl("http://192.168.1.3:48184"), false);
 });

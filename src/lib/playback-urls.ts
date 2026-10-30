@@ -1,3 +1,5 @@
+import { hostLiteralError } from "./net-guard.ts";
+
 export function isLoopbackUrl(url?: string) {
   if (!url) return false;
   try {
@@ -8,18 +10,16 @@ export function isLoopbackUrl(url?: string) {
   }
 }
 
-/** Reject schemes and cloud-metadata hosts. Private LAN addresses stay allowed. */
+/**
+ * Synchronous check used wherever there's no DNS (including the client): schemes,
+ * credentials, loopback in every form (127/8, ::1, IPv4-mapped), 0.0.0.0,
+ * link-local 169.254/16 (169.254.169.254, 169.254.170.2), metadata hosts, and
+ * plex.direct names that encode one of those. Private LAN ranges stay allowed
+ * here for Node and Jellyfin; the Plex proxy adds the stricter, DNS-resolved
+ * check in net-guard.server.ts, which refuses private ranges as well.
+ */
 export function serverAddressError(uri: string) {
-  let url: URL;
-  try {
-    url = new URL(uri);
-  } catch {
-    return "That server address is not allowed.";
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") return "That server address is not allowed.";
-  const host = url.hostname.toLowerCase();
-  if (host === "169.254.169.254" || host === "metadata.google.internal") return "That server address is not allowed.";
-  return null;
+  return hostLiteralError(uri, { allowPrivate: true });
 }
 
 export type PlaybackFit = "original" | "compatible";

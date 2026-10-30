@@ -1,8 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { convertSegmentUrl, rewriteConvertPlaylist } from "@/lib/convert";
 import { loadTicket } from "@/lib/playback.server";
-import { isPlexHlsTicket, plexHlsUpstream, rewritePlexPlaylist } from "@/lib/plex-hls";
-import { plexStatusMessage } from "@/lib/plex-errors";
+import { isPlexHlsTicket } from "@/lib/plex-hls";
+import { fetchMedia, servePlexHls, type AddressGuard } from "@/lib/media-proxy.server";
+import { hostLiteralError } from "@/lib/net-guard";
+
+/**
+ * Vercel function settings for this route are not set here: TanStack Start has no
+ * per-route `maxDuration` export. They're set in vite.config.ts through Nitro's
+ * `vercel.functionRules["/api/stream/**"]`, which gives /api/stream its own
+ * function with an explicit maxDuration.
+ */
 
 function isLiveTranscode(url: string) {
   return url.includes("/transcode/") || /[?&]static=false/i.test(url);
@@ -21,33 +29,16 @@ function upstreamHeaders(ticketHeaders: Record<string, string>, range: string) {
   return headers;
 }
 
-function isLoopbackHost(host: string) {
-  const name = host.toLowerCase().replace(/^\[|\]$/g, "");
-  return name === "localhost" || name === "127.0.0.1" || name === "::1" || name === "0.0.0.0";
-}
+/**
+ * Node and Jellyfin tickets may point at a LAN address (a CINEVO Node on the
+ * same machine as a self-hosted house), so they keep private ranges but still
+ * refuse loopback, link-local and metadata hosts, on the first URL and every hop.
+ */
+const lenientGuard: AddressGuard = async (url) => hostLiteralError(url, { allowPrivate: true });
+const LEGACY_HEADER_TIMEOUT_MS = 15_000;
 
-/** Plex sometimes redirects a transcode at its own loopback. Keep the public host. */
-function rewriteLoopback(next: string, origin: string) {
-  const target = new URL(next, origin);
-  const base = new URL(origin);
-  if (isLoopbackHost(target.hostname) && !isLoopbackHost(base.hostname)) {
-    target.protocol = base.protocol;
-    target.host = base.host;
-  }
-  return target.toString();
-}
-
-async function fetchMedia(url: string, headers: Headers, method: "GET" | "HEAD") {
-  let current = url;
-  for (let hop = 0; hop < 4; hop += 1) {
-    const upstream = await fetch(current, { method, headers, redirect: "manual" });
-    if (upstream.status < 300 || upstream.status >= 400) return upstream;
-    const location = upstream.headers.get("location");
-    await upstream.body?.cancel();
-    if (!location) return upstream;
-    current = rewriteLoopback(location, current);
-  }
-  return fetch(current, { method, headers, redirect: "follow" });
+function legacyFetch(url: string, headers: Headers, method: "GET" | "HEAD") {
+  return fetchMedia(url, headers, method, { guard: lenientGuard, headerTimeoutMs: LEGACY_HEADER_TIMEOUT_MS });
 }
 
 function passHeaders(upstream: Response, download: boolean, live: boolean) {
@@ -66,49 +57,6 @@ function passHeaders(upstream: Response, download: boolean, live: boolean) {
   return out;
 }
 
-function plexFailure(status: number) {
-  // Status and kind only. Never the URL, which names the server, or the token.
-  console.error("[stream] plex upstream failed", { status });
-  return new Response(plexStatusMessage(status, "proxy"), {
-    status: 502,
-    headers: {
-      "Content-Type": "text/plain;charset=UTF-8",
-      "Cache-Control": "no-store",
-      "X-Cinevo-Upstream-Status": String(status),
-    },
-  });
-}
-
-/** Plex HLS: each request is one playlist or one segment, so no response outlives a function. */
-async function servePlexHls(ticket: { url: string; headers: Record<string, string> }, ticketId: string, rel: string | null) {
-  const target = rel === null ? ticket.url : plexHlsUpstream(ticket.url, rel);
-  if (!target) return new Response("That stream path is not allowed.", { status: 400 });
-  let upstream: Response;
-  try {
-    upstream = await fetchMedia(target, upstreamHeaders(ticket.headers, ""), "GET");
-  } catch {
-    return plexFailure(0);
-  }
-  if (!upstream.ok) {
-    await upstream.body?.cancel();
-    return plexFailure(upstream.status);
-  }
-  const type = upstream.headers.get("content-type") || "";
-  const finalUrl = upstream.url || target;
-  if (/mpegurl|m3u8/i.test(type) || new URL(target).pathname.endsWith(".m3u8")) {
-    const text = await upstream.text();
-    if (!text.trimStart().startsWith("#EXTM3U")) return plexFailure(upstream.status);
-    return new Response(rewritePlexPlaylist(text, finalUrl, ticketId), {
-      status: 200,
-      headers: { "Content-Type": "application/vnd.apple.mpegurl", "Cache-Control": "private, no-store" },
-    });
-  }
-  return new Response(upstream.body, {
-    status: 200,
-    headers: { "Content-Type": type || "video/mp2t", "Cache-Control": "private, max-age=3600" },
-  });
-}
-
 export const Route = createFileRoute("/api/stream/$ticket")({
   server: {
     handlers: {
@@ -122,7 +70,7 @@ export const Route = createFileRoute("/api/stream/$ticket")({
           try {
             const target = convertSegmentUrl(ticket.url, seg);
             const upstreamUrl = requestUrl.searchParams.get("whole") === "1" ? `${target}${target.includes("?") ? "&" : "?"}whole=1` : target;
-            const upstream = await fetchMedia(upstreamUrl, upstreamHeaders(ticket.headers, ""), "GET");
+            const upstream = await legacyFetch(upstreamUrl, upstreamHeaders(ticket.headers, ""), "GET");
             const type = upstream.headers.get("content-type") || "";
             if (!upstream.ok || /json|html|xml|plain/i.test(type)) {
               return new Response("CINEVO could not convert that part of the file.", { status: 502 });
@@ -143,11 +91,11 @@ export const Route = createFileRoute("/api/stream/$ticket")({
         const range = live ? "" : request.headers.get("range") || "";
         let upstream: Response;
         try {
-          upstream = await fetchMedia(ticket.url, upstreamHeaders(ticket.headers, range), "GET");
+          upstream = await legacyFetch(ticket.url, upstreamHeaders(ticket.headers, range), "GET");
           const type = upstream.headers.get("content-type") || "";
           if (range && !isVideoResponse(upstream.status, type)) {
             await upstream.body?.cancel();
-            upstream = await fetchMedia(ticket.url, upstreamHeaders(ticket.headers, ""), "GET");
+            upstream = await legacyFetch(ticket.url, upstreamHeaders(ticket.headers, ""), "GET");
           }
         } catch {
           return new Response("CINEVO could not reach that media server.", { status: 502 });
@@ -183,9 +131,9 @@ export const Route = createFileRoute("/api/stream/$ticket")({
         }
         const range = isLiveTranscode(ticket.url) ? "" : request.headers.get("range") || "";
         try {
-          let upstream = await fetchMedia(ticket.url, upstreamHeaders(ticket.headers, range), "HEAD");
+          let upstream = await legacyFetch(ticket.url, upstreamHeaders(ticket.headers, range), "HEAD");
           if ((upstream.status === 405 || upstream.status === 501) && !isLiveTranscode(ticket.url)) {
-            upstream = await fetchMedia(ticket.url, upstreamHeaders(ticket.headers, range || "bytes=0-1"), "GET");
+            upstream = await legacyFetch(ticket.url, upstreamHeaders(ticket.headers, range || "bytes=0-1"), "GET");
             await upstream.body?.cancel();
           }
           if (upstream.status !== 200 && upstream.status !== 206) {

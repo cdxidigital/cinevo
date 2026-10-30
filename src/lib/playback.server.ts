@@ -1,5 +1,6 @@
 import { getSql } from "@/lib/db";
 import { isPlexHlsTicket } from "@/lib/plex-hls";
+import { serverAddressCheck } from "@/lib/net-guard.server";
 import { jellyfinStreamTarget, nodeStreamTarget, plexStreamTarget, serverAddressError, type PlaybackFit } from "@/lib/playback-urls";
 
 function ticketId() {
@@ -22,7 +23,8 @@ export async function createTicket(input: {
   const key = input.key.trim();
   const token = input.token.trim();
   if (!uri || !key || !token) return { ok: false as const, error: "Missing playback details." };
-  const blocked = serverAddressError(uri);
+  const blocked =
+    input.provider === "plex" ? await serverAddressCheck(uri, { allowPrivate: false }) : serverAddressError(uri);
   if (blocked) return { ok: false as const, error: blocked };
   const clientId = input.clientId || "cinevo-web";
   const fit = input.fit === "compatible" ? "compatible" : "original";

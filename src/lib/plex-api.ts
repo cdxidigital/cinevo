@@ -102,8 +102,19 @@ export const plexOpenServer = createServerFn({ method: "POST" })
   .validator((input: { clientId: string; token: string; server: PlexServer }) => input)
   .handler(async ({ data }) => {
     const token = data.server.accessToken || data.token;
-    const ranked = rankConnections(data.server.connections);
-    if (!ranked.length) return { ok: false as const, error: "That server has no reachable connections." };
+    const { serverAddressCheck } = await import("./net-guard.server");
+    const ranked = [];
+    // This runs on Vercel: loopback, link-local, metadata and private (home-network)
+    // addresses are refused before dialing, after DNS, including plex.direct names.
+    for (const conn of rankConnections(data.server.connections)) {
+      if (!(await serverAddressCheck(conn.uri, { allowPrivate: false }))) ranked.push(conn);
+    }
+    if (!ranked.length) {
+      return {
+        ok: false as const,
+        error: "CINEVO can't reach that server from the internet. Turn on Remote Access in Plex, or play on the server's home network.",
+      };
+    }
     let last = "Could not reach that Plex server from here.";
     for (const conn of ranked) {
       try {
@@ -130,6 +141,9 @@ export const plexImportSections = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator((input: { clientId: string; token: string; uri: string; sourceLabel: string; sectionKeys: string[] }) => input)
   .handler(async ({ data }) => {
+    const { serverAddressCheck } = await import("./net-guard.server");
+    const blocked = await serverAddressCheck(data.uri, { allowPrivate: false });
+    if (blocked) return { ok: false as const, error: blocked };
     const headers = { ...plexHeaders(data.clientId, data.token), "X-Plex-Token": data.token };
     const titles: ReturnType<typeof parsePlexMetadata> = [];
     const folders = new Set<string>();

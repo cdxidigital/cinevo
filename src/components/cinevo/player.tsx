@@ -12,7 +12,9 @@ import type { PlaybackFit } from "@/lib/playback-urls";
 import { nodePlayUrl } from "@/lib/node-client";
 import { type WirelessVideo } from "@/lib/cast";
 import { openCast } from "./cast-sheet";
-import { isLoopbackUrl } from "@/lib/playback-urls";
+import { isLoopbackUrl, plexHlsUrl, plexSessionId, plexStopUrl } from "@/lib/playback-urls";
+import { browserConnections } from "@/lib/plex";
+import { plexStatusMessage, upstreamStatus } from "@/lib/plex-errors";
 import { averageColor, gateGain, noiseLevel, shapedMix } from "@/lib/house-mix";
 import { nextEpisode } from "@/lib/plex-shelf";
 import { BrandWatermark } from "./logo";
@@ -45,6 +47,7 @@ function formatClock(current: number, duration: number) {
 function streamPath(file?: string, source?: string) {
   if (!file) return "No stream";
   if (file.startsWith("blob:")) return "Direct play · this browser";
+  if (file.includes("/video/:/transcode/universal/")) return "Direct from your Plex server · HLS";
   if (file.includes("/api/stream")) {
     if (source === "plex") return "CINEVO proxy · Plex";
     if (source === "jellyfin") return "CINEVO proxy · Jellyfin";
@@ -117,6 +120,7 @@ export function Player() {
   const nodeToken = useCinevo((s) => s.nodeToken);
   const plexToken = useCinevo((s) => s.plexToken);
   const plexClient = useCinevo((s) => s.plexClientId);
+  const plexServers = useCinevo((s) => s.plexServers);
   const user = useCurrentUser();
   const localTitles = useCinevo((s) => s.localTitles);
   const remoteTitles = useCinevo((s) => s.remoteTitles);
@@ -140,9 +144,16 @@ export function Player() {
   const [remotePending, setRemotePending] = useState(false);
   const [playbackFailed, setPlaybackFailed] = useState(false);
   const [fit, setFit] = useState<PlaybackFit>("original");
+  // Plex tries each browser-reachable connection directly, then the CINEVO proxy.
+  const [plexAttempt, setPlexAttempt] = useState(0);
+  const [remoteHls, setRemoteHls] = useState(false);
+  const plexDirect = useRef<{ uri: string; token: string; session: string } | null>(null);
+  const plexLast = useRef<{ status: number; via: "direct" | "proxy" }>({ status: 0, via: "direct" });
+  const plexHasNext = useRef(false);
   const [fitTitle, setFitTitle] = useState<string | null | undefined>(playingId);
   if (fitTitle !== playingId) {
     setFitTitle(playingId);
+    setPlexAttempt(0);
     const disk = title?.source === "folder" && !mediaUrl(title.id);
     setFit(disk && needsBrowserCopy(title?.path || title?.title || "") ? "compatible" : "original");
   }
@@ -150,17 +161,48 @@ export function Player() {
   const blob = title ? mediaUrl(title.id) : undefined;
   const file = playbackFailed ? undefined : blob || remoteSrc;
   const converting = Boolean(file && fit === "compatible" && title?.source === "folder" && !blob);
+  const hlsMode = converting || Boolean(file && remoteHls && !blob);
+
+  /** A Plex attempt failed: try the next connection, then the proxy, then say what Plex said. */
+  const plexFailed = (status: number, via: "direct" | "proxy", media = false) => {
+    plexLast.current = { status, via };
+    if (media && fit === "original") {
+      setFit("compatible");
+      return;
+    }
+    if (plexHasNext.current) {
+      setPlexAttempt((n) => n + 1);
+      return;
+    }
+    setPlaybackFailed(true);
+    setRemoteErr(
+      media
+        ? "Your Plex server could not make a copy this browser can play."
+        : plexStatusMessage(status, via),
+    );
+  };
   const cueBase = useRef(new WeakMap<TextTrackCue, { start: number; end: number }>());
   const primed = useRef("");
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !file || !converting) return;
-    if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      video.src = file;
+    if (!video || !file || !hlsMode) return;
+    const direct = plexDirect.current && file.startsWith(plexDirect.current.uri) ? plexDirect.current : null;
+    const plex = title?.source === "plex";
+    const stopDirect = () => {
+      if (!direct) return;
+      void fetch(plexStopUrl(direct.uri, direct.session), { headers: { "X-Plex-Token": direct.token }, mode: "cors" }).catch(
+        () => undefined,
+      );
+    };
+    // hls.js first for Plex: it can send the token as a header. Native HLS (iOS) cannot,
+    // so only that path puts the server's token in the URL.
+    if (video.canPlayType("application/vnd.apple.mpegurl") && !(plex && typeof window !== "undefined" && "MediaSource" in window)) {
+      video.src = direct ? `${file}&X-Plex-Token=${encodeURIComponent(direct.token)}` : file;
       return () => {
         video.removeAttribute("src");
         video.load();
+        stopDirect();
       };
     }
     let closed = false;
@@ -172,7 +214,24 @@ export function Player() {
         setRemoteErr("This browser cannot play a converted stream.");
         return;
       }
-      const hls = new Hls({ enableWorker: true, maxBufferLength: 30 });
+      const hls = new Hls({
+        enableWorker: true,
+        maxBufferLength: 30,
+        ...(direct
+          ? {
+              xhrSetup: (xhr: XMLHttpRequest) => xhr.setRequestHeader("X-Plex-Token", direct.token),
+              // A home-network address times out fast when you're away; move on.
+              manifestLoadPolicy: {
+                default: {
+                  maxTimeToFirstByteMs: 6000,
+                  maxLoadTimeMs: 15000,
+                  timeoutRetry: null,
+                  errorRetry: null,
+                },
+              },
+            }
+          : {}),
+      });
       player = hls;
       hls.loadSource(file);
       hls.attachMedia(node);
@@ -181,17 +240,32 @@ export function Player() {
       });
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (!data.fatal || closed) return;
-        setPlaybackFailed(true);
-        setRemoteErr("CINEVO could not convert this file. Install ffmpeg on the computer running CINEVO Node, then play it again.");
         closed = true;
         hls.destroy();
+        if (plex) {
+          const media = data.type === Hls.ErrorTypes.MEDIA_ERROR;
+          const status = direct
+            ? data.response?.code ?? 0
+            : upstreamStatus(data.networkDetails) ?? data.response?.code ?? 0;
+          plexFailed(status, direct ? "direct" : "proxy", media);
+          return;
+        }
+        setPlaybackFailed(true);
+        setRemoteErr(
+          converting
+            ? "CINEVO could not convert this file. Install ffmpeg on the computer running CINEVO Node, then play it again."
+            : "CINEVO could not play this stream.",
+        );
       });
     });
     return () => {
       closed = true;
       player?.destroy();
+      stopDirect();
     };
-  }, [file, converting]);
+    // plexFailed closes over fit; a new fit produces a new file anyway.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [file, hlsMode]);
 
   useEffect(() => {
     const video = videoRef.current as WirelessVideo | null;
@@ -221,6 +295,9 @@ export function Player() {
     setRemoteErr("");
     setRemotePending(false);
     setPlaybackFailed(false);
+    setRemoteHls(false);
+    plexDirect.current = null;
+    plexHasNext.current = false;
     setStatsOpen(false);
     setInfoOpen(false);
     primed.current = "";
@@ -240,8 +317,10 @@ export function Player() {
       void issuePlayback({ data: { provider, uri, key, token, clientId, fit } })
         .then((res) => {
           if (cancelled) return;
-          if (res.ok) setRemoteSrc(res.src);
-          else setRemoteErr(res.error);
+          if (res.ok) {
+            setRemoteHls(Boolean("hls" in res && res.hls));
+            setRemoteSrc(res.src);
+          } else setRemoteErr(res.error);
         })
         .catch(() => {
           if (!cancelled) setRemoteErr("Could not open a playback stream through CINEVO.");
@@ -261,24 +340,46 @@ export function Player() {
         cancelled = true;
       };
     }
-    if ((title.source === "plex" || title.source === "jellyfin") && title.path && source?.baseUrl) {
-      const token = source.accessToken || (title.source === "plex" ? plexToken : "");
+    if (title.source === "plex" && title.path && source?.baseUrl) {
+      const token = source.accessToken || plexToken;
+      if (!token) return;
+      const server = plexServers.find((s) => `plex-${s.id}` === source.id);
+      const direct = server ? browserConnections(server.connections, window.location.protocol).map((c) => c.uri) : [];
+      const step = Math.min(plexAttempt, direct.length);
+      plexHasNext.current = step < direct.length;
+      if (step < direct.length) {
+        const uri = direct[step];
+        const session = plexSessionId(title.path);
+        plexDirect.current = { uri, token, session };
+        setRemoteHls(true);
+        setRemoteSrc(plexHlsUrl(uri, title.path, plexClient || "cinevo-web", fit, session));
+        return () => {
+          cancelled = true;
+        };
+      }
+      openProxy("plex", source.baseUrl, title.path, token, plexClient || undefined);
+      return () => {
+        cancelled = true;
+      };
+    }
+    if (title.source === "jellyfin" && title.path && source?.baseUrl) {
+      const token = source.accessToken || "";
       if (token) openProxy(title.source, source.baseUrl, title.path, token, plexClient || undefined);
     }
     return () => {
       cancelled = true;
     };
-  }, [title?.id, title?.path, title?.source, title?.sourceLabel, nodeToken, nodeUrl, plexClient, plexToken, sources, fit]);
+  }, [title?.id, title?.path, title?.source, title?.sourceLabel, nodeToken, nodeUrl, plexClient, plexToken, plexServers, sources, fit, plexAttempt]);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !file) return;
     video.muted = muted;
     if (playing) void video.play().catch(() => {
-      if (!converting) useCinevo.setState({ playing: false });
+      if (!hlsMode) useCinevo.setState({ playing: false });
     });
     else video.pause();
-  }, [playing, file, playingId, muted, converting]);
+  }, [playing, file, playingId, muted, hlsMode]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -597,7 +698,7 @@ export function Player() {
         <video
           ref={videoRef}
           data-cinevo-player=""
-          src={file && !converting ? file : undefined}
+          src={file && !hlsMode ? file : undefined}
           className="player-video absolute inset-0 h-full w-full bg-cine-bg object-contain"
           playsInline
           preload="auto"
@@ -632,6 +733,23 @@ export function Player() {
           }}
           onError={() => {
             if (!blob && !remoteSrc) return;
+            if (title.source === "plex" && !blob) {
+              // hls.js reports its own errors with the HTTP status. Only native HLS lands here.
+              if (hlsMode && "MediaSource" in window) return;
+              const direct = Boolean(plexDirect.current && remoteSrc?.startsWith(plexDirect.current.uri));
+              if (direct) {
+                plexFailed(0, "direct");
+                return;
+              }
+              // Native player gives no status; ask the proxy once for Plex's.
+              void fetch(remoteSrc || "", { method: "GET", cache: "no-store" })
+                .then((res) => {
+                  void res.body?.cancel();
+                  plexFailed(res.ok ? 0 : upstreamStatus(res) ?? res.status, "proxy", res.ok);
+                })
+                .catch(() => plexFailed(0, "proxy"));
+              return;
+            }
             if (
               !blob &&
               fit === "original" &&
@@ -1029,7 +1147,7 @@ export function Player() {
                   aria-label="Download original"
                   className="flex size-11 items-center justify-center"
                   onClick={() => {
-                    if (!file.startsWith("/api/stream")) {
+                    if (!file.startsWith("/api/stream") || hlsMode) {
                       flash("This file plays from the browser. Use the folder if you need the original.");
                       return;
                     }

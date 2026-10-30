@@ -1,6 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { convertSegmentUrl, rewriteConvertPlaylist } from "@/lib/convert";
 import { loadTicket } from "@/lib/playback.server";
+import { isPlexHlsTicket, plexHlsUpstream, rewritePlexPlaylist } from "@/lib/plex-hls";
+import { plexStatusMessage } from "@/lib/plex-errors";
 
 function isLiveTranscode(url: string) {
   return url.includes("/transcode/") || /[?&]static=false/i.test(url);
@@ -64,6 +66,49 @@ function passHeaders(upstream: Response, download: boolean, live: boolean) {
   return out;
 }
 
+function plexFailure(status: number) {
+  // Status and kind only. Never the URL, which names the server, or the token.
+  console.error("[stream] plex upstream failed", { status });
+  return new Response(plexStatusMessage(status, "proxy"), {
+    status: 502,
+    headers: {
+      "Content-Type": "text/plain;charset=UTF-8",
+      "Cache-Control": "no-store",
+      "X-Cinevo-Upstream-Status": String(status),
+    },
+  });
+}
+
+/** Plex HLS: each request is one playlist or one segment, so no response outlives a function. */
+async function servePlexHls(ticket: { url: string; headers: Record<string, string> }, ticketId: string, rel: string | null) {
+  const target = rel === null ? ticket.url : plexHlsUpstream(ticket.url, rel);
+  if (!target) return new Response("That stream path is not allowed.", { status: 400 });
+  let upstream: Response;
+  try {
+    upstream = await fetchMedia(target, upstreamHeaders(ticket.headers, ""), "GET");
+  } catch {
+    return plexFailure(0);
+  }
+  if (!upstream.ok) {
+    await upstream.body?.cancel();
+    return plexFailure(upstream.status);
+  }
+  const type = upstream.headers.get("content-type") || "";
+  const finalUrl = upstream.url || target;
+  if (/mpegurl|m3u8/i.test(type) || new URL(target).pathname.endsWith(".m3u8")) {
+    const text = await upstream.text();
+    if (!text.trimStart().startsWith("#EXTM3U")) return plexFailure(upstream.status);
+    return new Response(rewritePlexPlaylist(text, finalUrl, ticketId), {
+      status: 200,
+      headers: { "Content-Type": "application/vnd.apple.mpegurl", "Cache-Control": "private, no-store" },
+    });
+  }
+  return new Response(upstream.body, {
+    status: 200,
+    headers: { "Content-Type": type || "video/mp2t", "Cache-Control": "private, max-age=3600" },
+  });
+}
+
 export const Route = createFileRoute("/api/stream/$ticket")({
   server: {
     handlers: {
@@ -71,6 +116,7 @@ export const Route = createFileRoute("/api/stream/$ticket")({
         const ticket = await loadTicket(params.ticket);
         if (!ticket) return new Response("Playback expired", { status: 410 });
         const requestUrl = new URL(request.url);
+        if (isPlexHlsTicket(ticket.url)) return servePlexHls(ticket, params.ticket, requestUrl.searchParams.get("hls"));
         const seg = requestUrl.searchParams.get("seg");
         if (seg !== null && /^\d+$/.test(seg)) {
           try {
@@ -131,6 +177,10 @@ export const Route = createFileRoute("/api/stream/$ticket")({
       HEAD: async ({ request, params }) => {
         const ticket = await loadTicket(params.ticket);
         if (!ticket) return new Response(null, { status: 410 });
+        // Starting a Plex transcode for a HEAD probe would leave a session running.
+        if (isPlexHlsTicket(ticket.url)) {
+          return new Response(null, { status: 200, headers: { "Content-Type": "application/vnd.apple.mpegurl", "Cache-Control": "private, no-store" } });
+        }
         const range = isLiveTranscode(ticket.url) ? "" : request.headers.get("range") || "";
         try {
           let upstream = await fetchMedia(ticket.url, upstreamHeaders(ticket.headers, range), "HEAD");

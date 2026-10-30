@@ -1,4 +1,5 @@
 import { getSql } from "@/lib/db";
+import { isPlexHlsTicket } from "@/lib/plex-hls";
 import { jellyfinStreamTarget, nodeStreamTarget, plexStreamTarget, serverAddressError, type PlaybackFit } from "@/lib/playback-urls";
 
 function ticketId() {
@@ -39,7 +40,7 @@ export async function createTicket(input: {
     insert into cinevo_play_tickets (id, user_id, provider, url, headers, expires_at)
     values (${id}, ${input.userId}, ${input.provider}, ${target.url}, ${JSON.stringify(target.headers)}, ${expires}::timestamptz)
   `;
-  return { ok: true as const, src: `/api/stream/${id}` };
+  return { ok: true as const, src: `/api/stream/${id}`, hls: isPlexHlsTicket(target.url) };
 }
 
 export async function loadTicket(id: string) {

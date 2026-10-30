@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  browserConnections,
   connectionKind,
   isPlexServer,
   parsePlexMetadata,
@@ -125,4 +126,22 @@ test("isPlexServer reads comma provides", () => {
   assert.equal(isPlexServer({ provides: "server" }), true);
   assert.equal(isPlexServer({ provides: "client, server" }), true);
   assert.equal(isPlexServer({ provides: "player" }), false);
+});
+
+test("browser connections: https only from an https page, home network first, relay last", () => {
+  const conns = [
+    { uri: "https://relay.abc.plex.direct:8443", local: false, relay: true, protocol: "https", address: "", port: 8443 },
+    { uri: "https://203-0-113-9.abc.plex.direct:32400", local: false, relay: false, protocol: "https", address: "", port: 32400 },
+    { uri: "http://192.168.1.20:32400", local: true, relay: false, protocol: "http", address: "", port: 32400 },
+    { uri: "https://192-168-1-20.abc.plex.direct:32400", local: true, relay: false, protocol: "https", address: "", port: 32400 },
+    { uri: "https://203.0.113.9:32400", local: false, relay: false, protocol: "https", address: "", port: 32400 },
+  ] satisfies PlexConnection[];
+  const onHttps = browserConnections(conns, "https:").map((c) => c.uri);
+  assert.deepEqual(onHttps, [
+    "https://192-168-1-20.abc.plex.direct:32400",
+    "https://203-0-113-9.abc.plex.direct:32400",
+    "https://relay.abc.plex.direct:8443",
+  ]);
+  const onHttp = browserConnections(conns, "http:").map((c) => c.uri);
+  assert.equal(onHttp[onHttp.length - 1], "http://192.168.1.20:32400");
 });

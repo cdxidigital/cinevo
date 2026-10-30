@@ -102,6 +102,33 @@ export function connectionScore(c: PlexConnection) {
   return score;
 }
 
+/**
+ * Connections a browser can open directly, best first. From an https page an
+ * http:// connection is mixed content and is dropped. Order: https on the home
+ * network (free under Plex's remote-play rules, no Remote Access needed), then
+ * https remote, then https relay (bandwidth-capped by Plex). The plain-IP https
+ * form is skipped because its certificate cannot match; plex.direct names can.
+ */
+export function browserConnections(conns: PlexConnection[], pageProtocol = "https:") {
+  const secure = pageProtocol === "https:";
+  const rank = (c: PlexConnection) => {
+    const url = new URL(c.uri);
+    return (url.protocol === "https:" ? 0 : 100) + (c.relay ? 30 : c.local ? 0 : 10);
+  };
+  return conns
+    .filter((c) => {
+      let url: URL;
+      try {
+        url = new URL(c.uri);
+      } catch {
+        return false;
+      }
+      if (url.protocol === "https:") return !/^\d{1,3}(\.\d{1,3}){3}$/.test(url.hostname) && !url.hostname.startsWith("[");
+      return !secure && url.protocol === "http:";
+    })
+    .sort((a, b) => rank(a) - rank(b));
+}
+
 export function connectionKind(c: Pick<PlexConnection, "local" | "relay">) {
   if (c.relay) return "Relay";
   if (c.local) return "Local";

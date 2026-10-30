@@ -1,6 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { convertSegmentUrl, rewriteConvertPlaylist } from "@/lib/convert";
 import { loadTicket } from "@/lib/playback.server";
+import { isPlexHlsTicket } from "@/lib/plex-hls";
+import { fetchMedia, lanGuard, servePlexHls, type AddressGuard } from "@/lib/media-proxy.server";
+
+/**
+ * Vercel function settings for this route are not set here: TanStack Start has no
+ * per-route `maxDuration` export. They're set in vite.config.ts through Nitro's
+ * `vercel.functionRules["/api/stream/**"]`, which gives /api/stream its own
+ * function with an explicit maxDuration.
+ */
 
 function isLiveTranscode(url: string) {
   return url.includes("/transcode/") || /[?&]static=false/i.test(url);
@@ -19,33 +28,17 @@ function upstreamHeaders(ticketHeaders: Record<string, string>, range: string) {
   return headers;
 }
 
-function isLoopbackHost(host: string) {
-  const name = host.toLowerCase().replace(/^\[|\]$/g, "");
-  return name === "localhost" || name === "127.0.0.1" || name === "::1" || name === "0.0.0.0";
-}
+/**
+ * Node and Jellyfin tickets may point at a LAN address (a CINEVO Node on the
+ * same machine as a self-hosted house), so they keep private ranges but still
+ * refuse loopback, link-local and metadata hosts, after DNS (so names like
+ * localtest.me or 127.0.0.1.nip.io are caught), on the first URL and every hop.
+ */
+const lenientGuard: AddressGuard = lanGuard();
+const LEGACY_HEADER_TIMEOUT_MS = 15_000;
 
-/** Plex sometimes redirects a transcode at its own loopback. Keep the public host. */
-function rewriteLoopback(next: string, origin: string) {
-  const target = new URL(next, origin);
-  const base = new URL(origin);
-  if (isLoopbackHost(target.hostname) && !isLoopbackHost(base.hostname)) {
-    target.protocol = base.protocol;
-    target.host = base.host;
-  }
-  return target.toString();
-}
-
-async function fetchMedia(url: string, headers: Headers, method: "GET" | "HEAD") {
-  let current = url;
-  for (let hop = 0; hop < 4; hop += 1) {
-    const upstream = await fetch(current, { method, headers, redirect: "manual" });
-    if (upstream.status < 300 || upstream.status >= 400) return upstream;
-    const location = upstream.headers.get("location");
-    await upstream.body?.cancel();
-    if (!location) return upstream;
-    current = rewriteLoopback(location, current);
-  }
-  return fetch(current, { method, headers, redirect: "follow" });
+function legacyFetch(url: string, headers: Headers, method: "GET" | "HEAD") {
+  return fetchMedia(url, headers, method, { guard: lenientGuard, headerTimeoutMs: LEGACY_HEADER_TIMEOUT_MS });
 }
 
 function passHeaders(upstream: Response, download: boolean, live: boolean) {
@@ -71,12 +64,13 @@ export const Route = createFileRoute("/api/stream/$ticket")({
         const ticket = await loadTicket(params.ticket);
         if (!ticket) return new Response("Playback expired", { status: 410 });
         const requestUrl = new URL(request.url);
+        if (isPlexHlsTicket(ticket.url)) return servePlexHls(ticket, params.ticket, requestUrl.searchParams.get("hls"));
         const seg = requestUrl.searchParams.get("seg");
         if (seg !== null && /^\d+$/.test(seg)) {
           try {
             const target = convertSegmentUrl(ticket.url, seg);
             const upstreamUrl = requestUrl.searchParams.get("whole") === "1" ? `${target}${target.includes("?") ? "&" : "?"}whole=1` : target;
-            const upstream = await fetchMedia(upstreamUrl, upstreamHeaders(ticket.headers, ""), "GET");
+            const upstream = await legacyFetch(upstreamUrl, upstreamHeaders(ticket.headers, ""), "GET");
             const type = upstream.headers.get("content-type") || "";
             if (!upstream.ok || /json|html|xml|plain/i.test(type)) {
               return new Response("CINEVO could not convert that part of the file.", { status: 502 });
@@ -97,11 +91,11 @@ export const Route = createFileRoute("/api/stream/$ticket")({
         const range = live ? "" : request.headers.get("range") || "";
         let upstream: Response;
         try {
-          upstream = await fetchMedia(ticket.url, upstreamHeaders(ticket.headers, range), "GET");
+          upstream = await legacyFetch(ticket.url, upstreamHeaders(ticket.headers, range), "GET");
           const type = upstream.headers.get("content-type") || "";
           if (range && !isVideoResponse(upstream.status, type)) {
             await upstream.body?.cancel();
-            upstream = await fetchMedia(ticket.url, upstreamHeaders(ticket.headers, ""), "GET");
+            upstream = await legacyFetch(ticket.url, upstreamHeaders(ticket.headers, ""), "GET");
           }
         } catch {
           return new Response("CINEVO could not reach that media server.", { status: 502 });
@@ -131,11 +125,15 @@ export const Route = createFileRoute("/api/stream/$ticket")({
       HEAD: async ({ request, params }) => {
         const ticket = await loadTicket(params.ticket);
         if (!ticket) return new Response(null, { status: 410 });
+        // Starting a Plex transcode for a HEAD probe would leave a session running.
+        if (isPlexHlsTicket(ticket.url)) {
+          return new Response(null, { status: 200, headers: { "Content-Type": "application/vnd.apple.mpegurl", "Cache-Control": "private, no-store" } });
+        }
         const range = isLiveTranscode(ticket.url) ? "" : request.headers.get("range") || "";
         try {
-          let upstream = await fetchMedia(ticket.url, upstreamHeaders(ticket.headers, range), "HEAD");
+          let upstream = await legacyFetch(ticket.url, upstreamHeaders(ticket.headers, range), "HEAD");
           if ((upstream.status === 405 || upstream.status === 501) && !isLiveTranscode(ticket.url)) {
-            upstream = await fetchMedia(ticket.url, upstreamHeaders(ticket.headers, range || "bytes=0-1"), "GET");
+            upstream = await legacyFetch(ticket.url, upstreamHeaders(ticket.headers, range || "bytes=0-1"), "GET");
             await upstream.body?.cancel();
           }
           if (upstream.status !== 200 && upstream.status !== 206) {

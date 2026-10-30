@@ -1,5 +1,7 @@
 import { getSql } from "@/lib/db";
-import { jellyfinStreamTarget, nodeStreamTarget, plexStreamTarget, serverAddressError, type PlaybackFit } from "@/lib/playback-urls";
+import { isPlexHlsTicket } from "@/lib/plex-hls";
+import { serverAddressCheck } from "@/lib/net-guard.server";
+import { jellyfinStreamTarget, nodeStreamTarget, plexStreamTarget, type PlaybackFit } from "@/lib/playback-urls";
 
 function ticketId() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -21,7 +23,10 @@ export async function createTicket(input: {
   const key = input.key.trim();
   const token = input.token.trim();
   if (!uri || !key || !token) return { ok: false as const, error: "Missing playback details." };
-  const blocked = serverAddressError(uri);
+  const blocked =
+    // Plex tickets are fetched from Vercel only, so private ranges are refused;
+    // Node and Jellyfin may be on the LAN, but DNS is still resolved and checked.
+    await serverAddressCheck(uri, { allowPrivate: input.provider !== "plex" });
   if (blocked) return { ok: false as const, error: blocked };
   const clientId = input.clientId || "cinevo-web";
   const fit = input.fit === "compatible" ? "compatible" : "original";
@@ -39,7 +44,7 @@ export async function createTicket(input: {
     insert into cinevo_play_tickets (id, user_id, provider, url, headers, expires_at)
     values (${id}, ${input.userId}, ${input.provider}, ${target.url}, ${JSON.stringify(target.headers)}, ${expires}::timestamptz)
   `;
-  return { ok: true as const, src: `/api/stream/${id}` };
+  return { ok: true as const, src: `/api/stream/${id}`, hls: isPlexHlsTicket(target.url) };
 }
 
 export async function loadTicket(id: string) {

@@ -1,3 +1,5 @@
+import { hostLiteralError } from "./net-guard.ts";
+
 export function isLoopbackUrl(url?: string) {
   if (!url) return false;
   try {
@@ -8,18 +10,16 @@ export function isLoopbackUrl(url?: string) {
   }
 }
 
-/** Reject schemes and cloud-metadata hosts. Private LAN addresses stay allowed. */
+/**
+ * Synchronous check used wherever there's no DNS (including the client): schemes,
+ * credentials, loopback in every form (127/8, ::1, IPv4-mapped), 0.0.0.0,
+ * link-local 169.254/16 (169.254.169.254, 169.254.170.2), metadata hosts, and
+ * plex.direct names that encode one of those. Private LAN ranges stay allowed
+ * here for Node and Jellyfin; the Plex proxy adds the stricter, DNS-resolved
+ * check in net-guard.server.ts, which refuses private ranges as well.
+ */
 export function serverAddressError(uri: string) {
-  let url: URL;
-  try {
-    url = new URL(uri);
-  } catch {
-    return "That server address is not allowed.";
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") return "That server address is not allowed.";
-  const host = url.hostname.toLowerCase();
-  if (host === "169.254.169.254" || host === "metadata.google.internal") return "That server address is not allowed.";
-  return null;
+  return hostLiteralError(uri, { allowPrivate: true });
 }
 
 export type PlaybackFit = "original" | "compatible";
@@ -43,26 +43,45 @@ function plexLocation(uri: string) {
   return "wan";
 }
 
-export function plexStreamTarget(
+const PLEX_HLS_PROFILE =
+  "add-transcode-target(type=videoProfile&context=streaming&protocol=hls&container=mpegts&videoCodec=h264&audioCodec=aac&subtitleCodec=)";
+
+/** One id per play. Plex keys its transcode session on it, and `plexStopUrl` ends it. */
+export function plexSessionId(ratingKey: string) {
+  const key = ratingKey.replace(/^plex-/, "").replace(/[^a-z0-9]/gi, "");
+  const rand =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID().replace(/-/g, "").slice(0, 12)
+      : Math.random().toString(36).slice(2, 14);
+  return `cinevo${key}${rand}`.slice(0, 40);
+}
+
+/**
+ * Plex HLS transcode (`start.m3u8`, protocol=hls). Plex's own web player and the
+ * common client libraries use this path. Every response is a short playlist or
+ * segment, so it plays straight from Plex in the browser and also fits through
+ * the CINEVO proxy without one long-lived function response.
+ *
+ * The token is only put in the URL when `token` is passed. Native HLS (iOS Safari)
+ * cannot send headers, so it needs it; hls.js sends it as a header instead.
+ */
+export function plexHlsUrl(
   uri: string,
   ratingKey: string,
-  token: string,
   clientId: string,
   fit: PlaybackFit = "original",
+  session = plexSessionId(ratingKey),
+  token?: string,
 ) {
   const key = ratingKey.replace(/^plex-/, "").replace(/^\//, "");
   const client = clientId || "cinevo-web";
   const compatible = fit === "compatible";
-  const base = uri.replace(/\/$/, "");
-  const session = `c${Date.now().toString(36)}${key}`.replace(/[^a-z0-9]/gi, "").slice(0, 40);
-  const profile =
-    "add-transcode-target(type=videoProfile&context=streaming&protocol=http&container=mp4&videoCodec=h264&audioCodec=aac&subtitleCodec=)";
   const params = new URLSearchParams({
     hasMDE: "1",
     path: `/library/metadata/${key}`,
     mediaIndex: "0",
     partIndex: "0",
-    protocol: "http",
+    protocol: "hls",
     fastSeek: "1",
     directPlay: "0",
     directStream: compatible ? "0" : "1",
@@ -70,13 +89,13 @@ export function plexStreamTarget(
     videoQuality: compatible ? "70" : "99",
     maxVideoBitrate: compatible ? "12000" : "200000",
     location: plexLocation(uri),
-    mediaBufferSize: compatible ? "20480" : "20480",
+    mediaBufferSize: "20480",
     audioBoost: "100",
     autoAdjustQuality: "0",
-    copyts: compatible ? "0" : "1",
+    copyts: "1",
     offset: "0",
-    subtitles: "none",
     session,
+    "X-Plex-Session-Identifier": session,
     "X-Plex-Product": "CINEVO",
     "X-Plex-Client-Identifier": client,
     "X-Plex-Platform": "Chrome",
@@ -84,14 +103,29 @@ export function plexStreamTarget(
     "X-Plex-Device-Name": "CINEVO",
     "X-Plex-Version": "1.0.0",
     "X-Plex-Client-Profile-Name": "CINEVO",
-    "X-Plex-Client-Profile-Extra": profile,
-    "X-Plex-Token": token,
+    "X-Plex-Client-Profile-Extra": PLEX_HLS_PROFILE,
   });
   if (compatible) {
     params.set("videoCodec", "h264");
     params.set("audioCodec", "aac");
-    params.set("container", "mp4");
   }
+  if (token) params.set("X-Plex-Token", token);
+  return `${uri.replace(/\/$/, "")}/video/:/transcode/universal/start.m3u8?${params.toString()}`;
+}
+
+export function plexStopUrl(uri: string, session: string) {
+  return `${uri.replace(/\/$/, "")}/video/:/transcode/universal/stop?${new URLSearchParams({ session }).toString()}`;
+}
+
+/** Server-side (proxy) Plex target. The token rides on the header only, never in the stored URL. */
+export function plexStreamTarget(
+  uri: string,
+  ratingKey: string,
+  token: string,
+  clientId: string,
+  fit: PlaybackFit = "original",
+) {
+  const client = clientId || "cinevo-web";
   const headers: Record<string, string> = {
     "X-Plex-Token": token,
     "X-Plex-Product": "CINEVO",
@@ -100,11 +134,11 @@ export function plexStreamTarget(
     "X-Plex-Device": "Web",
     "X-Plex-Device-Name": "CINEVO",
     "X-Plex-Client-Profile-Name": "CINEVO",
-    "X-Plex-Client-Profile-Extra": profile,
+    "X-Plex-Client-Profile-Extra": PLEX_HLS_PROFILE,
     Accept: "*/*",
   };
   return {
-    url: `${base}/video/:/transcode/universal/start.mp4?${params.toString()}`,
+    url: plexHlsUrl(uri, ratingKey, client, fit),
     headers,
   };
 }

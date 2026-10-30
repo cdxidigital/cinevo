@@ -175,6 +175,17 @@ export default defineConfig(({ command, isPreview }) => ({
             // manifest + head-tag middleware). Nitro v3 defaults serverDir to
             // false, so removing this silently unwires /?install=1 on deploys.
             serverDir: "./server",
+            // /api/stream gets its own function with an explicit limit. Plex HLS
+            // requests are short (playlist 10s, segment 45s budgets in
+            // media-proxy.server.ts); 300s is Vercel's default ceiling and is
+            // kept for the Jellyfin/Node progressive pass-through, which streams
+            // a whole file through one response. TanStack Start routes can't
+            // export maxDuration, so it lives here.
+            vercel: {
+              functionRules: {
+                "/api/stream/**": { maxDuration: 300 },
+              },
+            },
           }),
         ]
       : []),

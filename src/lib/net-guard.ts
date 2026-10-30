@@ -4,7 +4,7 @@
  *
  * Always blocked: loopback (127/8, ::1, IPv4-mapped and NAT64 forms), unspecified
  * (0.0.0.0/8, ::), link-local (169.254/16 including the AWS/ECS 169.254.170.2 and
- * metadata 169.254.169.254, fe80::/10), CGNAT 100.64/10 (Alibaba metadata
+ * metadata 169.254.169.254, fe80::/10, deprecated site-local fec0::/10), CGNAT 100.64/10 (Alibaba metadata
  * 100.100.100.200), multicast and reserved, and named metadata hosts.
  * Private ranges (10/8, 172.16/12, 192.168/16, fc00::/7) are blocked unless the
  * caller allows them: the Vercel-side Plex proxy never allows them, because a
@@ -83,6 +83,7 @@ export function blockedIpReason(ip: string, { allowPrivate = false } = {}): stri
   }
   if (v6[0] === 0x64 && v6[1] === 0xff9b && v6.slice(2, 6).every((g) => g === 0)) return v4Reason(embedded(), allowPrivate);
   if ((v6[0] & 0xffc0) === 0xfe80) return "link-local";
+  if ((v6[0] & 0xffc0) === 0xfec0) return "site-local";
   if ((v6[0] & 0xff00) === 0xff00) return "multicast-or-reserved";
   if ((v6[0] & 0xfe00) === 0xfc00) return allowPrivate && !(v6[0] === 0xfd00 && v6[1] === 0x0ec2) ? null : "private";
   return null;

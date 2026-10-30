@@ -115,3 +115,19 @@ test("query smuggling can't change the host or path (Priya: query smuggling)", (
   assert.equal(plexHlsUpstream(TICKET, `?${S}/base/0.ts`), null);
   assert.equal(plexHlsUpstream(TICKET, `#${S}/base/0.ts`), null);
 });
+
+test("unquoted URI= and URI = with spaces are handled the way hls.js 1.7.3 parses them (Priya N8)", () => {
+  for (const tag of [
+    "#EXT-X-KEY:METHOD=AES-128,URI=https://evil.example/k",
+    "#EXT-X-MAP:URI=https://evil.example/init.mp4",
+    "#EXT-X-MAP:URI=header",
+    '#EXT-X-KEY:METHOD=AES-128,URI ="https://evil.example/k"',
+    '#EXT-X-MAP:URI = "https://evil.example/init.mp4"',
+    "#ext-x-key:method=AES-128,uri = https://evil.example/k",
+  ]) {
+    assert.equal(rewritePlexPlaylist(`#EXTM3U\n${tag}\n#EXTINF:4,\nsession/s1/base/0.ts\n`, TICKET, "t1", "s1"), null, tag);
+  }
+  const ok = rewritePlexPlaylist('#EXTM3U\n#EXT-X-MAP:URI = "session/s1/base/header"\n#EXTINF:4,\nsession/s1/base/0.ts\n', TICKET, "t1", "s1");
+  assert.ok(ok?.includes(`URI="/api/stream/t1?hls=${encodeURIComponent(`${S}/base/header`)}"`));
+  assert.equal(ok?.includes("session/s1/base/header\""), false);
+});

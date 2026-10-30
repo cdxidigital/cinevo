@@ -99,8 +99,11 @@ export function rewritePlexPlaylist(body: string, upstreamUrl: string, ticketId:
       continue;
     }
     if (trimmed.startsWith("#")) {
+      // hls.js 1.7.3 also accepts unquoted values and spaces around "=" (its
+      // ATTR_LIST_REGEX), so an unquoted URI can't be rewritten safely: refuse.
+      if (/\bURI\s*=(?!\s*")/i.test(trimmed)) return null;
       let foreign = false;
-      const rewritten = line.replace(/URI="([^"]*)"/gi, (_whole, uri: string) => {
+      const rewritten = line.replace(/\bURI\s*=\s*"([^"]*)"/gi, (_whole, uri: string) => {
         const next = proxied(uri, base, ticketId, session);
         if (!next) foreign = true;
         return `URI="${next ?? ""}"`;

@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import http from "node:http";
 import test, { after } from "node:test";
-import { fetchMedia, PLAYLIST_MAX_BYTES, servePlexHls, strictGuard, UpstreamError, type AddressGuard } from "./media-proxy.server.ts";
+import { fetchMedia, PLAYLIST_MAX_BYTES, sameHostRedirect, servePlexHls, strictGuard, UpstreamError, type AddressGuard } from "./media-proxy.server.ts";
 
 const DUMMY = "dummy-token-not-real";
 const servers: http.Server[] = [];
@@ -146,4 +146,24 @@ test("an upstream that never answers is timed out (Priya: hang)", async () => {
     (e: unknown) => e instanceof UpstreamError && e.kind === "timeout",
   );
   assert.ok(Date.now() - started < 3000);
+});
+
+test("http→https keeps the port; only 80→443 with neither port written may change it (Priya nit)", () => {
+  const ok = (o: string, c: string, n: string) => sameHostRedirect(new URL(o), new URL(c), new URL(n));
+  assert.equal(ok("http://h:32400/a", "http://h:32400/a", "https://h/b"), false);
+  assert.equal(ok("http://h:32400/a", "http://h:32400/a", "https://h:443/b"), false);
+  assert.equal(ok("http://h:32400/a", "http://h:32400/a", "https://h:32400/b"), true);
+  assert.equal(ok("http://h/a", "http://h/a", "https://h/b"), true);
+  assert.equal(ok("http://h/a", "http://h/a", "https://h:8443/b"), false);
+  assert.equal(ok("https://h:32400/a", "https://h:32400/a", "http://h:32400/b"), false);
+  assert.equal(ok("http://h:32400/a", "http://h:32400/a", "http://other:32400/b"), false);
+  assert.equal(ok("http://h:32400/a", "http://h:32400/a", "http://u:p@h:32400/b"), false);
+});
+
+test("a redirect from http://A:port to https://A (port dropped) is refused before any fetch", async () => {
+  const port = await serve((_req, res) => res.writeHead(302, { location: "https://127.0.0.1/x" }).end());
+  await assert.rejects(
+    fetchMedia(`http://127.0.0.1:${port}/`, new Headers(), "GET", { guard: async () => null }),
+    (e: unknown) => e instanceof UpstreamError && e.kind === "redirect",
+  );
 });

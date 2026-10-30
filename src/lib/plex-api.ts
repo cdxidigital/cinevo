@@ -22,6 +22,7 @@ function plexHeaders(clientId: string, token?: string) {
   };
 }
 
+/** plex.tv only. Calls to a user's own server go through plexServerJson. */
 async function plexJson(url: string, headers: Record<string, string>, ms = 8000, init: RequestInit = {}): Promise<unknown> {
   const res = await fetch(url, {
     ...init,
@@ -34,6 +35,11 @@ async function plexJson(url: string, headers: Record<string, string>, ms = 8000,
     throw new Error(String(row.error || row.message || `Plex returned ${res.status}`));
   }
   return data;
+}
+
+async function serverJson(url: string, headers: Record<string, string>, ms = 8000) {
+  const { plexServerJson } = await import("./plex-server-fetch.server");
+  return plexServerJson(url, headers, ms);
 }
 
 export const plexStartPin = createServerFn({ method: "POST" })
@@ -118,7 +124,7 @@ export const plexOpenServer = createServerFn({ method: "POST" })
     let last = "Could not reach that Plex server from here.";
     for (const conn of ranked) {
       try {
-        const body = await plexJson(
+        const body = await serverJson(
           `${conn.uri}/library/sections`,
           { ...plexHeaders(data.clientId, token), "X-Plex-Token": token },
           conn.local ? 2500 : 6000,
@@ -153,14 +159,14 @@ export const plexImportSections = createServerFn({ method: "POST" })
         for (let start = 0; start < 1600 && titles.length < 1600; start += 200) {
           let body: unknown;
           try {
-            body = await plexJson(
+            body = await serverJson(
               `${data.uri}/library/sections/${encodeURIComponent(key)}/allLeaves?X-Plex-Container-Start=${start}&X-Plex-Container-Size=200`,
               headers,
               12000,
             );
           } catch (err) {
             if (start > 0) break;
-            body = await plexJson(
+            body = await serverJson(
               `${data.uri}/library/sections/${encodeURIComponent(key)}/all?X-Plex-Container-Start=0&X-Plex-Container-Size=200`,
               headers,
               12000,
@@ -192,7 +198,7 @@ async function walkPlexFolders(uri: string, sectionKey: string, headers: Record<
     seen.add(query);
     let body: unknown;
     try {
-      body = await plexJson(`${uri}/library/sections/${encodeURIComponent(sectionKey)}/folder${query}`, headers, 8000);
+      body = await serverJson(`${uri}/library/sections/${encodeURIComponent(sectionKey)}/folder${query}`, headers, 8000);
     } catch {
       return;
     }

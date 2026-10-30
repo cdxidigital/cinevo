@@ -2,8 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { convertSegmentUrl, rewriteConvertPlaylist } from "@/lib/convert";
 import { loadTicket } from "@/lib/playback.server";
 import { isPlexHlsTicket } from "@/lib/plex-hls";
-import { fetchMedia, servePlexHls, type AddressGuard } from "@/lib/media-proxy.server";
-import { hostLiteralError } from "@/lib/net-guard";
+import { fetchMedia, lanGuard, servePlexHls, type AddressGuard } from "@/lib/media-proxy.server";
 
 /**
  * Vercel function settings for this route are not set here: TanStack Start has no
@@ -32,9 +31,10 @@ function upstreamHeaders(ticketHeaders: Record<string, string>, range: string) {
 /**
  * Node and Jellyfin tickets may point at a LAN address (a CINEVO Node on the
  * same machine as a self-hosted house), so they keep private ranges but still
- * refuse loopback, link-local and metadata hosts, on the first URL and every hop.
+ * refuse loopback, link-local and metadata hosts, after DNS (so names like
+ * localtest.me or 127.0.0.1.nip.io are caught), on the first URL and every hop.
  */
-const lenientGuard: AddressGuard = async (url) => hostLiteralError(url, { allowPrivate: true });
+const lenientGuard: AddressGuard = lanGuard();
 const LEGACY_HEADER_TIMEOUT_MS = 15_000;
 
 function legacyFetch(url: string, headers: Headers, method: "GET" | "HEAD") {

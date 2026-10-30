@@ -29,8 +29,27 @@ export type FetchMediaOptions = {
 };
 
 /**
+ * May a redirect from `current` (a hop that started at `origin`) go to `next`?
+ * Same hostname and the same port. The one exception is the default-port upgrade:
+ * http://host (port 80, none written) to https://host (443, none written). Never
+ * a downgrade from https.
+ */
+export function sameHostRedirect(origin: URL, current: URL, next: URL) {
+  if (next.username || next.password) return false;
+  if (next.protocol !== "http:" && next.protocol !== "https:") return false;
+  if (current.protocol === "https:" && next.protocol !== "https:") return false;
+  if (next.hostname !== origin.hostname) return false;
+  if (next.port === origin.port) return true;
+  return origin.protocol === "http:" && !origin.port && next.protocol === "https:" && !next.port;
+}
+
+/** Node and Jellyfin: the LAN is allowed, but DNS is resolved and loopback, link-local and metadata are refused. */
+export const lanGuard = (lookup?: Lookup): AddressGuard => (url) => serverAddressCheck(url, { allowPrivate: true, lookup });
+
+/**
  * Fetch with manual redirects. A hop is followed only if it stays on the same
- * host (hostname and port; http→https allowed, never a downgrade) and passes
+ * host (hostname and port; http→https only on the same port, or 80→443 with
+ * neither written; never a downgrade) and passes
  * the address guard again. A redirect that points at Plex's own loopback is
  * rewritten back onto the public host first (a known Plex quirk). Anything
  * else is refused with UpstreamError("redirect"): the token never leaves the
@@ -69,9 +88,7 @@ export async function fetchMedia(url: string, headers: Headers, method: "GET" | 
       next.protocol = current.protocol;
       next.host = current.host;
     }
-    const sameHost = next.hostname === origin.hostname && (next.port === origin.port || (next.protocol === "https:" && origin.protocol === "http:" && !next.port));
-    const downgrade = current.protocol === "https:" && next.protocol !== "https:";
-    if (!sameHost || downgrade) throw new UpstreamError("redirect");
+    if (!sameHostRedirect(origin, current, next)) throw new UpstreamError("redirect");
     current = next;
   }
   throw new UpstreamError("redirect");

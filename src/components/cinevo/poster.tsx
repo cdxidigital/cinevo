@@ -76,6 +76,7 @@ export const PosterCard = memo(function PosterCard({
           )}
         </button>
         <span className="poster-shade" />
+        <span className="poster-source">{title.sourceLabel || title.source || "Library"}</span>
         <span className="poster-stamp">
           <Mark />
         </span>

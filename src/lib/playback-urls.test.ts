@@ -3,10 +3,19 @@ import test from "node:test";
 import {
   isLoopbackUrl,
   jellyfinStreamTarget,
+  nextPlaybackFit,
   nodeStreamTarget,
   plexStreamTarget,
   serverAddressError,
 } from "./playback-urls.ts";
+
+test("a failed original steps to one browser copy, then stops", () => {
+  assert.equal(nextPlaybackFit("original", "plex"), "compatible");
+  assert.equal(nextPlaybackFit("original", "jellyfin"), "compatible");
+  assert.equal(nextPlaybackFit("original", "folder"), "compatible");
+  assert.equal(nextPlaybackFit("original", "preview"), null);
+  assert.equal(nextPlaybackFit("compatible", "plex"), null);
+});
 
 test("plex playback is a CINEVO-side stream, not direct play", () => {
   const target = plexStreamTarget("https://plex.example:32400/", "plex-99", "secret-token", "client-1");

@@ -27,6 +27,9 @@ export function ToolsRoom() {
   const startParty = useCinevo((s) => s.startParty);
   const setCoreOpen = useCinevo((s) => s.setCoreOpen);
   const flash = useCinevo((s) => s.flash);
+  const errors = useCinevo((s) => s.playbackErrors);
+  const setSettingsOpen = useCinevo((s) => s.setSettingsOpen);
+  const missing = library.filter((title) => !title.year || title.year === "—" || !title.synopsis);
 
   const [collectionName, setCollectionName] = useState("");
   const [collectionId, setCollectionId] = useState("");
@@ -66,6 +69,29 @@ export function ToolsRoom() {
           These tools use titles you have already imported. Nothing here is a public catalog, a live channel, or a fake server graph.
         </p>
       </header>
+
+      <section className="tool-card" aria-label="Library health">
+        <h2>Library health</h2>
+        {!library.length ? (
+          <p>No titles yet. Connect a library, or enter Preview House from Home. Nothing is deleted from disk here.</p>
+        ) : (
+          <ul className="space-y-2 text-sm text-cine-muted">
+            <li>{missing.length ? `${missing.length} titles are missing a year or a summary.` : "Metadata looks filled in."}</li>
+            <li>{errors.length ? `${errors.length} titles failed to play or convert.` : "No playback failures recorded on this device."}</li>
+            <li>{dupes.length ? `${dupes.length} possible duplicates (same title and year).` : "No obvious duplicates."}</li>
+          </ul>
+        )}
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button type="button" className="house-btn house-btn--ghost" onClick={() => setSettingsOpen(true)}>
+            Open settings
+          </button>
+          {dupes[0] ? (
+            <button type="button" className="house-btn house-btn--ghost" onClick={() => hideTitle(dupes[0][1].id)}>
+              Hide one duplicate entry
+            </button>
+          ) : null}
+        </div>
+      </section>
 
       <div className="tools-grid">
       <HouseRemote />

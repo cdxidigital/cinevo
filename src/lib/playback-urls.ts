@@ -24,6 +24,13 @@ export function serverAddressError(uri: string) {
 
 export type PlaybackFit = "original" | "compatible";
 
+/** After a failed original, try one browser-friendly copy. A second failure stops. */
+export function nextPlaybackFit(fit: PlaybackFit, source: string | undefined): PlaybackFit | null {
+  if (fit !== "original") return null;
+  if (source === "plex" || source === "jellyfin" || source === "folder") return "compatible";
+  return null;
+}
+
 function plexLocation(uri: string) {
   try {
     const host = new URL(uri).hostname.toLowerCase().replace(/^\[|\]$/g, "");

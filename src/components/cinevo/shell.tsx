@@ -1,7 +1,6 @@
 import { Bell, Clapperboard, Home, Library, Menu, Play, Plus, Search, Server, Settings2, Share2, Sparkles, Tv, Wrench, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "@tanstack/react-router";
-import { paramFromRoom } from "@/lib/app-destination";
+import { Link } from "@tanstack/react-router";
 import { useCinevo, progressBands, type Room } from "@/lib/cinevo-store";
 import type { LibSource } from "@/lib/library";
 import { isLoopbackUrl } from "@/lib/playback-urls";
@@ -137,15 +136,47 @@ export function Shell({
   const playingId = useCinevo((s) => s.playingId);
   const party = useCinevo((s) => s.party);
   const endParty = useCinevo((s) => s.endParty);
-  const navigate = useNavigate();
   const [drawer, setDrawer] = useState(false);
   const [navHidden, setNavHidden] = useState(false);
   const hydrated = useCinevo((s) => s.hydrated);
   const noteVisit = useCinevo((s) => s.noteVisit);
+  const gamification = useCinevo((s) => s.prefs.gamification);
+  const previewHouse = useCinevo((s) => s.previewHouse);
+  const leavePreview = useCinevo((s) => s.leavePreview);
+  const nodeOffline = useCinevo((s) => s.nodeOffline);
+  const nodeUrl = useCinevo((s) => s.nodeUrl);
+  const nodeToken = useCinevo((s) => s.nodeToken);
+  const setNodeOffline = useCinevo((s) => s.setNodeOffline);
 
   useEffect(() => {
-    if (hydrated) noteVisit();
-  }, [hydrated, noteVisit]);
+    if (hydrated && gamification) noteVisit();
+  }, [hydrated, noteVisit, gamification]);
+
+  useEffect(() => {
+    if (!nodeToken || !nodeUrl) {
+      setNodeOffline(false);
+      return;
+    }
+    let stop = false;
+    const ping = () => {
+      const ctrl = new AbortController();
+      const timer = window.setTimeout(() => ctrl.abort(), 2500);
+      void fetch(`${nodeUrl.replace(/\/$/, "")}/v1/status`, { signal: ctrl.signal })
+        .then((res) => {
+          if (!stop) setNodeOffline(!res.ok);
+        })
+        .catch(() => {
+          if (!stop) setNodeOffline(true);
+        })
+        .finally(() => window.clearTimeout(timer));
+    };
+    ping();
+    const id = window.setInterval(ping, 30000);
+    return () => {
+      stop = true;
+      window.clearInterval(id);
+    };
+  }, [nodeUrl, nodeToken, setNodeOffline]);
 
   useEffect(() => {
     if (room === "browse" || NAV.some((item) => item.id === room)) return;
@@ -165,44 +196,9 @@ export function Shell({
     };
   }, [drawer]);
 
-  const overlayOpen = Boolean(playingId);
-  const playing = Boolean(playingId);
   useEffect(() => {
-    if (!overlayOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [overlayOpen]);
-
-  useEffect(() => {
-    if (overlayOpen || drawer) {
-      setNavHidden(false);
-      return;
-    }
-    if (playing) {
-      setNavHidden(true);
-      return;
-    }
-    let t = window.setTimeout(() => setNavHidden(true), 2800);
-    let last = 0;
-    const poke = () => {
-      const now = performance.now();
-      if (now - last < 200) return;
-      last = now;
-      setNavHidden((hidden) => (hidden ? false : hidden));
-      window.clearTimeout(t);
-      t = window.setTimeout(() => setNavHidden(true), 2800);
-    };
-    window.addEventListener("mousemove", poke);
-    window.addEventListener("keydown", poke);
-    return () => {
-      window.clearTimeout(t);
-      window.removeEventListener("mousemove", poke);
-      window.removeEventListener("keydown", poke);
-    };
-  }, [overlayOpen, drawer, playing]);
+    setNavHidden(Boolean(playingId) && !drawer);
+  }, [playingId, drawer]);
 
   const go = (id: Room) => {
     setRoom(id);
@@ -213,17 +209,6 @@ export function Shell({
     if (state.settingsOpen) setSettingsOpen(false);
     if (state.noticesOpen) setNoticesOpen(false);
     if (state.selectedId) state.closeTitle();
-    const room = paramFromRoom(id);
-    void navigate({
-      to: "/app",
-      search: (prev) => {
-        const next = { ...prev };
-        if (room) next.room = room;
-        else delete next.room;
-        return next;
-      },
-      replace: true,
-    });
   };
 
   return (
@@ -462,7 +447,22 @@ export function Shell({
         </div>
       ) : null}
 
-      <main key={room} className={cn("house-main", room !== "stage" && "house-main--page")}>{children}</main>
+      <main key={room} className={cn("house-main", room !== "stage" && "house-main--page")}>
+        {previewHouse ? (
+          <p className="house-banner" role="status">
+            Preview — not your library
+            <button type="button" onClick={() => leavePreview()}>
+              Connect your real library
+            </button>
+          </p>
+        ) : null}
+        {nodeOffline && !previewHouse ? (
+          <p className="house-banner house-banner--quiet" role="status">
+            Offline / limited mode. Previously loaded titles stay here. Node is not answering.
+          </p>
+        ) : null}
+        {children}
+      </main>
       <ArtworkSync />
       <AccountLibraries />
       {overlays}

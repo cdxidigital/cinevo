@@ -1,19 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Activity, Bookmark, Cast, Download, Expand, Info, Pause, Play, SkipForward, Subtitles, Volume2, VolumeX, X } from "lucide-react";
+import { Activity, Bookmark, Cast, ChevronDown, ChevronUp, Download, Expand, Info, Pause, Play, SkipBack, SkipForward, SlidersHorizontal, Subtitles, Volume2, VolumeX, X } from "lucide-react";
 import { titleById, useCinevo } from "@/lib/cinevo-store";
 import { coverFor, mediaUrl, sourceForTitle } from "@/lib/library";
+import { isPreviewId, previewStream } from "@/lib/preview-house";
 import { needsBrowserCopy } from "@/lib/convert";
 import { reconnectFolders } from "@/lib/folder-handles";
 import { bumpWatch } from "@/lib/sharing";
 import { useCurrentUser } from "@/lib/auth/use-current-user";
 import type { RemoteCommand } from "@/lib/remote-protocol";
 import { issuePlayback } from "@/lib/playback";
-import type { PlaybackFit } from "@/lib/playback-urls";
+import { isLoopbackUrl, nextPlaybackFit, type PlaybackFit } from "@/lib/playback-urls";
 import { nodePlayUrl } from "@/lib/node-client";
 import { type WirelessVideo } from "@/lib/cast";
 import { openCast } from "./cast-sheet";
-import { isLoopbackUrl } from "@/lib/playback-urls";
-import { averageColor, gateGain, noiseLevel, shapedMix } from "@/lib/house-mix";
+import { gateGain, noiseLevel, shapedMix } from "@/lib/house-mix";
 import { nextEpisode } from "@/lib/plex-shelf";
 import { BrandWatermark } from "./logo";
 
@@ -95,8 +95,6 @@ export function Player() {
   const playing = useCinevo((s) => s.playing);
   const progress = useCinevo((s) => (s.playingId ? s.progress[s.playingId] ?? 0 : 0));
   const focusMode = useCinevo((s) => s.prefs.focusMode);
-  const mix = useCinevo((s) => s.prefs.mix);
-  const ambience = useCinevo((s) => s.prefs.ambience);
   const denoise = useCinevo((s) => s.prefs.denoise);
   const eqLow = useCinevo((s) => s.prefs.eqLow);
   const eqMid = useCinevo((s) => s.prefs.eqMid);
@@ -109,6 +107,10 @@ export function Player() {
   const flash = useCinevo((s) => s.flash);
   const introSkip = useCinevo((s) => s.prefs.introSkip);
   const subtitleOffset = useCinevo((s) => s.prefs.subtitleOffset);
+  const subtitleSize = useCinevo((s) => s.prefs.subtitleSize);
+  const subtitleColor = useCinevo((s) => s.prefs.subtitleColor);
+  const subtitleBg = useCinevo((s) => s.prefs.subtitleBg);
+  const notePlaybackError = useCinevo((s) => s.notePlaybackError);
   const markers = useCinevo((s) => s.markers);
   const addMarker = useCinevo((s) => s.addMarker);
   const removeMarker = useCinevo((s) => s.removeMarker);
@@ -132,6 +134,8 @@ export function Player() {
   const audioRef = useRef<HouseAudio | null>(null);
   const [muted, setMuted] = useState(true);
   const [chrome, setChrome] = useState(true);
+  const [dock, setDock] = useState<"full" | "mini">("full");
+  const [more, setMore] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);
   const [nerd, setNerd] = useState<{ output: string; dropped: string; buffered: string; clock: string; path: string } | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
@@ -139,6 +143,7 @@ export function Player() {
   const [remoteErr, setRemoteErr] = useState("");
   const [remotePending, setRemotePending] = useState(false);
   const [playbackFailed, setPlaybackFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   const [fit, setFit] = useState<PlaybackFit>("original");
   const [fitTitle, setFitTitle] = useState<string | null | undefined>(playingId);
   if (fitTitle !== playingId) {
@@ -148,10 +153,12 @@ export function Player() {
   }
   const [onTv, setOnTv] = useState(false);
   const blob = title ? mediaUrl(title.id) : undefined;
-  const file = playbackFailed ? undefined : blob || remoteSrc;
-  const converting = Boolean(file && fit === "compatible" && title?.source === "folder" && !blob);
+  const previewUrl = isPreviewId(title?.id) ? previewStream(title?.id) : undefined;
+  const file = playbackFailed ? undefined : blob || previewUrl || remoteSrc;
+  const converting = Boolean(file && fit === "compatible" && title?.source === "folder" && !blob && !previewUrl);
   const cueBase = useRef(new WeakMap<TextTrackCue, { start: number; end: number }>());
   const primed = useRef("");
+  const stepping = useRef(false);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -217,6 +224,7 @@ export function Player() {
 
   useEffect(() => {
     let cancelled = false;
+    stepping.current = false;
     setRemoteSrc(undefined);
     setRemoteErr("");
     setRemotePending(false);
@@ -225,7 +233,7 @@ export function Player() {
     setInfoOpen(false);
     primed.current = "";
     cueBase.current = new WeakMap();
-    if (!title || mediaUrl(title.id)) return;
+    if (!title || mediaUrl(title.id) || isPreviewId(title.id)) return;
     const source =
       sourceForTitle(title, sources) ||
       sources.find((item) => item.kind === title.source && item.baseUrl && (item.accessToken || item.kind === "folder" || (item.kind === "plex" && plexToken)));
@@ -240,11 +248,25 @@ export function Player() {
       void issuePlayback({ data: { provider, uri, key, token, clientId, fit } })
         .then((res) => {
           if (cancelled) return;
-          if (res.ok) setRemoteSrc(res.src);
-          else setRemoteErr(res.error);
+          if (res.ok) {
+            setRemoteSrc(res.src);
+            return;
+          }
+          const next = nextPlaybackFit(fit, title.source);
+          if (next) {
+            setFit(next);
+            return;
+          }
+          setRemoteErr(res.error);
         })
         .catch(() => {
-          if (!cancelled) setRemoteErr("Could not open a playback stream through CINEVO.");
+          if (cancelled) return;
+          const next = nextPlaybackFit(fit, title.source);
+          if (next) {
+            setFit(next);
+            return;
+          }
+          setRemoteErr("Could not open a playback stream through CINEVO.");
         })
         .finally(() => {
           if (!cancelled) setRemotePending(false);
@@ -268,16 +290,19 @@ export function Player() {
     return () => {
       cancelled = true;
     };
-  }, [title?.id, title?.path, title?.source, title?.sourceLabel, nodeToken, nodeUrl, plexClient, plexToken, sources, fit]);
+  }, [title?.id, title?.path, title?.source, title?.sourceLabel, nodeToken, nodeUrl, plexClient, plexToken, sources, fit, attempt]);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !file) return;
     video.muted = muted;
-    if (playing) void video.play().catch(() => {
-      if (!converting) useCinevo.setState({ playing: false });
-    });
-    else video.pause();
+    if (playing && video.paused) {
+      void video.play().catch(() => {
+        if (!converting) useCinevo.setState({ playing: false });
+      });
+    } else if (!playing && !video.paused) {
+      video.pause();
+    }
   }, [playing, file, playingId, muted, converting]);
 
   useEffect(() => {
@@ -331,7 +356,7 @@ export function Player() {
       }
     }
     if (!graph) return;
-    const settings = shapedMix(mix, { low: eqLow, mid: eqMid, high: eqHigh }, denoise);
+    const settings = shapedMix("premiere", { low: eqLow, mid: eqMid, high: eqHigh }, denoise);
     const now = graph.ctx.currentTime;
     const glide = 0.08;
     graph.comp.threshold.setTargetAtTime(settings.threshold, now, glide);
@@ -358,7 +383,7 @@ export function Player() {
       live.gate.gain.setTargetAtTime(next, live.ctx.currentTime, 0.05);
     }, 80);
     return () => window.clearInterval(timer);
-  }, [file, mix, denoise, eqLow, eqMid, eqHigh]);
+  }, [file, denoise, eqLow, eqMid, eqHigh]);
 
   useEffect(() => {
     return () => {
@@ -369,40 +394,13 @@ export function Player() {
 
   useEffect(() => {
     const video = videoRef.current;
-    const stage = stageRef.current;
-    if (!video || !stage || !file || !ambience) {
-      stage?.style.removeProperty("--ambience");
-      return;
-    }
-    const canvas = document.createElement("canvas");
-    canvas.width = 24;
-    canvas.height = 14;
-    const paint = canvas.getContext("2d", { willReadFrequently: true });
-    if (!paint) return;
-    const sample = () => {
-      if (video.readyState < 2) return;
-      try {
-        paint.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const [r, g, b] = averageColor(paint.getImageData(0, 0, canvas.width, canvas.height).data);
-        stage.style.setProperty("--ambience", `${r} ${g} ${b}`);
-      } catch {
-        stage.style.removeProperty("--ambience");
-      }
-    };
-    sample();
-    const timer = window.setInterval(sample, 800);
-    return () => window.clearInterval(timer);
-  }, [file, ambience, playingId]);
-
-  useEffect(() => {
-    const video = videoRef.current;
     if (!video || !file) return;
     const on = captionTracks(video).some((track) => track.mode === "showing");
     if (on) shiftCueTimes(video, subtitleOffset, cueBase.current);
   }, [subtitleOffset, file, playingId]);
 
   useEffect(() => {
-    if (!playing || !file) {
+    if (!playing || !file || more) {
       setChrome(true);
       return;
     }
@@ -423,7 +421,19 @@ export function Player() {
       window.removeEventListener("mousemove", bump);
       window.removeEventListener("touchstart", bump);
     };
-  }, [playing, file]);
+  }, [playing, file, more]);
+
+  useEffect(() => {
+    if (playbackFailed && playingId) notePlaybackError(playingId);
+  }, [playbackFailed, playingId, notePlaybackError]);
+
+  useEffect(() => {
+    const node = document.getElementById("cinevo-cue-style") || document.createElement("style");
+    node.id = "cinevo-cue-style";
+    const bg = Math.round(subtitleBg * 255).toString(16).padStart(2, "0");
+    node.textContent = `video.player-video::cue { font-size: ${subtitleSize}%; color: ${subtitleColor}; background-color: #000000${bg}; }`;
+    document.head.appendChild(node);
+  }, [subtitleSize, subtitleColor, subtitleBg]);
 
   useEffect(() => {
     if (!playingId || !user || user.isDevFallback) return;
@@ -462,6 +472,21 @@ export function Player() {
       video.currentTime = (value / 100) * video.duration;
     }
   };
+
+  const skipBy = (seconds: number) => {
+    const video = videoRef.current;
+    if (!title || !video || !Number.isFinite(video.duration) || video.duration <= 0) return;
+    const next = Math.min(Math.max(0, video.currentTime + seconds), Math.max(0, video.duration - 0.2));
+    video.currentTime = next;
+    setProgress(title.id, (next / video.duration) * 100);
+  };
+
+  useEffect(() => {
+    document.documentElement.dataset.player = dock;
+    return () => {
+      delete document.documentElement.dataset.player;
+    };
+  }, [dock]);
 
   const onToggle = () => {
     if (!title) return;
@@ -587,18 +612,18 @@ export function Player() {
   return (
     <div
       ref={stageRef}
-      className="fixed inset-0 z-50 bg-cine-bg text-cine-text"
+      className={dock === "mini" ? "player-dock" : "fixed inset-0 z-50 bg-cine-bg text-cine-text"}
       role="dialog"
-      aria-modal="true"
+      aria-modal={dock !== "mini"}
       aria-label={`${title.title} player`}
-      onClick={() => file && onToggle()}
     >
       {file ? (
         <video
           ref={videoRef}
           data-cinevo-player=""
           src={file && !converting ? file : undefined}
-          className="player-video absolute inset-0 h-full w-full bg-cine-bg object-contain"
+          className={dock === "mini" ? "player-dock__video" : "player-video absolute inset-0 h-full w-full bg-cine-bg object-contain"}
+          controls={dock !== "mini"}
           playsInline
           preload="auto"
           autoPlay
@@ -630,22 +655,34 @@ export function Player() {
             if (percentRef.current) percentRef.current.textContent = `${Math.round(value)}%`;
             setProgress(title.id, value);
           }}
+          onPlay={() => {
+            if (!useCinevo.getState().playing) useCinevo.setState({ playing: true });
+          }}
+          onPause={() => {
+            const v = videoRef.current;
+            if (v?.ended) return;
+            if (useCinevo.getState().playing) useCinevo.setState({ playing: false });
+          }}
+          onVolumeChange={(e) => {
+            const next = e.currentTarget.muted || e.currentTarget.volume === 0;
+            setMuted((was) => (was === next ? was : next));
+          }}
           onError={() => {
-            if (!blob && !remoteSrc) return;
-            if (
-              !blob &&
-              fit === "original" &&
-              (title.source === "plex" || title.source === "jellyfin" || title.source === "folder")
-            ) {
-              setFit("compatible");
+            if (stepping.current) return;
+            if (!blob && !remoteSrc && !previewUrl) return;
+            const next = !blob && !previewUrl ? nextPlaybackFit(fit, title.source) : null;
+            if (next) {
+              stepping.current = true;
+              setFit(next);
               setPlaybackFailed(false);
               setRemoteErr("");
               return;
             }
             setPlaybackFailed(true);
-            if (blob) setRemoteErr("This file could not be played in the browser.");
+            if (previewUrl) setRemoteErr("This preview file did not start.");
+            else if (blob) setRemoteErr("This file could not be played in the browser.");
             else if (remoteSrc?.includes("/v1/play")) setRemoteErr("Could not play this file from Node on this computer.");
-            else if (fit === "compatible" && title.source === "folder") setRemoteErr("CINEVO could not convert this file. Install ffmpeg on the computer running CINEVO Node, then play it again.");
+            else if (fit === "compatible" && title.source === "folder") setRemoteErr("CINEVO could not convert this file. Install ffmpeg on the computer running CINEVO Node, then try again.");
             else if (fit === "compatible") setRemoteErr("Your server could not make a browser-friendly copy of this file.");
             else setRemoteErr("CINEVO could not play this file through the proxy. The server has to be reachable from here.");
           }}
@@ -659,10 +696,34 @@ export function Player() {
             setChrome(true);
           }}
         />
+      ) : dock === "mini" ? (
+        <img src={coverFor(title.title, title.accent, title.poster)} alt="" className="player-dock__video" />
       ) : (
         <img src={coverFor(title.title, title.accent, title.still || title.poster)} alt="" className="absolute inset-0 h-full w-full object-cover" />
       )}
-      {file && ambience ? <div className="player-ambience" aria-hidden="true" /> : null}
+      {dock === "mini" ? (
+        <div className="player-dock__body">
+          <button type="button" className="player-dock__title" onClick={() => setDock("full")}>
+            <strong>{title.title}</strong>
+            <small>{title.runtime || "Playing"}</small>
+          </button>
+          <div className="player-dock__controls">
+            {file ? (
+              <button type="button" aria-label={playing ? "Pause" : "Play"} onClick={onToggle}>
+                {playing ? <Pause size={18} /> : <Play size={18} fill="currentColor" />}
+              </button>
+            ) : null}
+            <button type="button" aria-label="Show player" onClick={() => setDock("full")}>
+              <ChevronUp size={18} />
+            </button>
+            <button type="button" aria-label="Close player" onClick={stopPlay}>
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {dock === "full" ? (
+      <>
       <BrandWatermark
         className={`absolute left-4 top-4 z-10 transition-opacity ${
           file && playing && !chrome ? "opacity-40" : "opacity-90"
@@ -742,29 +803,40 @@ export function Player() {
         </aside>
       ) : null}
       <div
-        className={`pointer-events-none absolute inset-x-0 bottom-0 h-40 bg-linear-to-t from-cine-bg to-transparent transition-opacity ${
-          chrome ? "opacity-100" : "opacity-0"
+        className={`pointer-events-none absolute inset-x-0 bottom-0 h-4 bg-linear-to-t from-cine-bg to-transparent transition-opacity ${
+          file || !chrome ? "opacity-0" : "opacity-100"
         }`}
       />
-      <button
-        type="button"
-        aria-label="Close player"
-        onClick={(e) => {
-          e.stopPropagation();
-          const v = videoRef.current;
-          const at = v && v.duration ? (v.currentTime / v.duration) * 100 : null;
-          stopPlay();
-          if (at != null) setProgress(title.id, at);
-        }}
-        className={`absolute right-4 top-4 z-10 flex size-11 items-center justify-center rounded-full border border-cine-line bg-cine-elevated/80 text-cine-text transition-opacity ${
-          chrome ? "opacity-100" : "opacity-0"
-        }`}
-      >
-        <X size={18} />
-      </button>
+      <div className="player-corner">
+        {file && upcoming ? (
+          <button type="button" aria-label={`Play next, ${upcoming.title}`} onClick={() => play(upcoming.id)}>
+            <SkipForward size={16} />
+          </button>
+        ) : null}
+        {file ? (
+          <button type="button" aria-label={onTv ? "Playing on a TV" : "Cast"} aria-pressed={onTv} onClick={() => openCast({ titleId: title.id })}>
+            <Cast size={16} />
+          </button>
+        ) : null}
+        <button type="button" aria-label="Minimise player" onClick={() => setDock("mini")}>
+          <ChevronDown size={16} />
+        </button>
+        <button
+          type="button"
+          aria-label="Close player"
+          onClick={() => {
+            const v = videoRef.current;
+            const at = v && v.duration ? (v.currentTime / v.duration) * 100 : null;
+            stopPlay();
+            if (at != null) setProgress(title.id, at);
+          }}
+        >
+          <X size={16} />
+        </button>
+      </div>
       <div
         className={`pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-4 px-6 transition-opacity ${
-          file && playing && !chrome ? "opacity-0" : "opacity-100"
+          file ? "hidden" : "opacity-100"
         }`}
       >
         {file ? (
@@ -774,6 +846,22 @@ export function Player() {
         ) : (
           <div className="pointer-events-auto max-w-md text-center">
             <p className="font-ui text-sm text-cine-muted">{missing}</p>
+            {remoteErr && !remotePending ? (
+              <button
+                type="button"
+                className="house-btn house-btn--play mt-4"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setRemoteErr("");
+                  setPlaybackFailed(false);
+                  setRemoteSrc(undefined);
+                  if (fit !== "original") setFit("original");
+                  setAttempt((n) => n + 1);
+                }}
+              >
+                Retry
+              </button>
+            ) : null}
             {title.source === "folder" && !remotePending ? (
               <button
                 type="button"
@@ -800,22 +888,22 @@ export function Player() {
           <p className="font-ui text-xs font-medium uppercase tracking-[0.08em] text-cine-muted">Sound off · unmute in the bar</p>
         ) : null}
       </div>
+      {!file ? (
       <section
-        className={`player-bar absolute inset-x-0 bottom-0 z-10 space-y-3 transition-opacity ${
-          chrome ? "opacity-100" : "pointer-events-none opacity-0"
-        } ${focusMode ? "opacity-70" : ""}`}
+        className="player-bar hidden"
         onClick={(e) => e.stopPropagation()}
       >
         <p className="font-ui text-xs font-medium tracking-[0.08em] text-cine-muted">
-          {progress >= 100
-            ? upcoming
-              ? "Finished · Next episode is ready"
-              : "Finished · Play again from the start"
-            : file
-              ? "Esc closes · Space pauses · I stats"
-              : "Esc closes"}
+          {previewUrl
+            ? "Preview file · direct play · not your library"
+            : converting
+              ? "Converting · browser copy · software path unless Node reports hardware"
+              : file
+                ? "Direct play · original file"
+                : "Waiting"}
+          {progress >= 100 ? " · Finished" : ""}
         </p>
-        {file ? (
+        {more && file ? (
           <div className="player-marks">
             {introSkip > 0 ? (
               <button
@@ -858,35 +946,14 @@ export function Player() {
               ))}
           </div>
         ) : null}
-        {file ? (
+        {more && file ? (
           <div className="player-mix" role="group" aria-label="Sound mix">
-            {(
-              [
-                ["premiere", "Premiere"],
-                ["night", "Night"],
-                ["dialogue", "Dialogue"],
-                ["flat", "Flat"],
-              ] as const
-            ).map(([id, label]) => (
-              <button
-                key={id}
-                type="button"
-                className={mix === id ? "is-on" : undefined}
-                aria-pressed={mix === id}
-                onClick={() => patchPrefs({ mix: id })}
-              >
-                {label}
-              </button>
-            ))}
-            <button type="button" className={ambience ? "is-on" : undefined} aria-pressed={ambience} onClick={() => patchPrefs({ ambience: !ambience })}>
-              Lights
-            </button>
             <button type="button" className={denoise ? "is-on" : undefined} aria-pressed={denoise} onClick={() => patchPrefs({ denoise: !denoise })}>
               Denoise
             </button>
           </div>
         ) : null}
-        {file ? (
+        {more && file ? (
           <div className="player-eq" role="group" aria-label="Equalizer">
             {(
               [
@@ -912,24 +979,7 @@ export function Player() {
             ))}
           </div>
         ) : null}
-        {file ? (
-          <div className="flex items-center gap-3 font-mono text-xs text-cine-muted">
-            <span ref={percentRef} className="w-10 tabular-nums">{Math.round(progress)}%</span>
-            <input
-              ref={timelineRef}
-              key={title.id}
-              aria-label="Timeline"
-              type="range"
-              min={0}
-              max={100}
-              defaultValue={progress}
-              onChange={(e) => seek(Number(e.target.value))}
-              className="h-1 flex-1 accent-cine-cyan"
-            />
-            <span>{title.runtime}</span>
-          </div>
-        ) : null}
-        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <div className="player-bar__tools">
           <div className="flex min-w-0 flex-1 items-center gap-3">
             {file ? (
               <button
@@ -941,6 +991,11 @@ export function Player() {
                 {playing ? <Pause size={18} /> : <Play size={18} />}
               </button>
             ) : null}
+            {file ? (
+              <button type="button" aria-label="Back 10 seconds" className="flex size-11 items-center justify-center" onClick={() => skipBy(-10)}>
+                <SkipBack size={18} />
+              </button>
+            ) : null}
             {upcoming ? (
               <button
                 type="button"
@@ -949,12 +1004,29 @@ export function Player() {
                 className="flex h-11 items-center gap-1 px-2 font-ui text-sm text-cine-text"
               >
                 <SkipForward size={18} />
-                Next
+              </button>
+            ) : file ? (
+              <button type="button" aria-label="Forward 10 seconds" className="flex size-11 items-center justify-center" onClick={() => skipBy(10)}>
+                <SkipForward size={18} />
               </button>
             ) : null}
-            <strong className="truncate font-ui text-lg font-semibold tracking-tight">{title.title}</strong>
+            <strong className="max-w-[5.5rem] truncate font-ui">{title.title}</strong>
           </div>
-          <div className="flex max-w-full flex-wrap items-center justify-end text-cine-muted">
+          {file ? (
+            <input
+              ref={timelineRef}
+              key={title.id}
+              aria-label="Timeline"
+              type="range"
+              min={0}
+              max={100}
+              defaultValue={progress}
+              onChange={(e) => seek(Number(e.target.value))}
+              className="player-bar__time"
+            />
+          ) : null}
+          <span ref={percentRef} className="sr-only">{Math.round(progress)}%</span>
+          <div className="player-transport text-cine-muted">
             {file ? (
               <>
                 <button
@@ -1008,6 +1080,25 @@ export function Player() {
                 </button>
                 <button
                   type="button"
+                  className="px-2 font-ui text-xs"
+                  onClick={() => {
+                    const offset = useCinevo.getState().prefs.subtitleOffset;
+                    const next = Math.max(-15, Math.min(15, offset + 0.5));
+                    useCinevo.getState().patchPrefs({ subtitleOffset: next });
+                    flash(`Subtitle offset ${next > 0 ? "+" : ""}${next}s`);
+                  }}
+                >
+                  Sync +
+                </button>
+                <button
+                  type="button"
+                  className="px-2 font-ui text-xs"
+                  onClick={() => useCinevo.getState().patchPrefs({ subtitleSize: Math.min(180, useCinevo.getState().prefs.subtitleSize + 10) })}
+                >
+                  Type
+                </button>
+                <button
+                  type="button"
                   aria-pressed={infoOpen}
                   aria-label={infoOpen ? "Hide file info" : "File info"}
                   className="flex size-11 items-center justify-center"
@@ -1046,6 +1137,23 @@ export function Player() {
                 </button>
                 <button
                   type="button"
+                  aria-pressed={more}
+                  aria-label={more ? "Hide sound and tools" : "Sound and tools"}
+                  className="flex size-11 items-center justify-center"
+                  onClick={() => setMore((open) => !open)}
+                >
+                  <SlidersHorizontal size={18} />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Minimise player"
+                  className="flex size-11 items-center justify-center"
+                  onClick={() => setDock("mini")}
+                >
+                  <ChevronDown size={18} />
+                </button>
+                <button
+                  type="button"
                   aria-label="Fullscreen"
                   className="flex size-11 items-center justify-center"
                   onClick={() => {
@@ -1068,12 +1176,15 @@ export function Player() {
             >
               <Cast size={18} />
             </button>
-            <button type="button" className="h-11 px-3 font-ui text-sm font-bold text-cine-cyan" onClick={stopPlay}>
-              Close
+            <button type="button" className="flex size-8 items-center justify-center text-cine-cyan" aria-label="Close player" onClick={stopPlay}>
+              <X size={16} />
             </button>
           </div>
         </div>
       </section>
+      ) : null}
+      </>
+      ) : null}
     </div>
   );
 }

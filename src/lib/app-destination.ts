@@ -9,14 +9,28 @@ export type AppCoreParam = (typeof APP_CORES)[number];
 export type AppDestination = {
   room?: AppRoomParam;
   core?: AppCoreParam;
+  title?: string;
+  watch?: string;
 };
+
+const SEAT = /^[\w:./~+-]{1,200}$/;
+
+export function seatId(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const id = value.trim();
+  return SEAT.test(id) ? id : undefined;
+}
 
 export function appDestination(search: Record<string, unknown>): AppDestination {
   const room = APP_ROOMS.includes(search.room as AppRoomParam) ? (search.room as AppRoomParam) : undefined;
   const core = APP_CORES.includes(search.core as AppCoreParam) ? (search.core as AppCoreParam) : undefined;
+  const title = seatId(search.title);
+  const watch = seatId(search.watch);
   return {
     ...(room ? { room } : {}),
     ...(core ? { core } : {}),
+    ...(title && title !== watch ? { title } : {}),
+    ...(watch ? { watch } : {}),
   };
 }
 

@@ -7,6 +7,7 @@ import { mixMode, clampEq, type MixMode } from "./house-mix";
 import { makePoster, migrateTheme } from "./library";
 import type { Collection, Marker, PlayLog, TitlePatch } from "./house-tools";
 import type { PlexServer } from "./plex";
+import { isPreviewId, previewTitle, PREVIEW_TITLES, withoutPreviewIds, withoutPreviewProgress } from "./preview-house";
 import {
   DEFAULT_DASHBOARD_WIDGETS,
   sanitizeDashboardWidgets,
@@ -27,6 +28,10 @@ export type Preferences = {
   dashboardWidgets: DashboardWidgetId[];
   introSkip: number;
   subtitleOffset: number;
+  subtitleSize: number;
+  subtitleColor: string;
+  subtitleBg: number;
+  gamification: boolean;
   libraryView: LibraryView;
   librarySort: LibrarySort;
   mix: MixMode;
@@ -117,6 +122,11 @@ type CinevoState = {
   plays: PlayLog[];
   patches: Record<string, TitlePatch>;
   house: HouseRecord;
+  previewHouse: boolean;
+  offlineIds: string[];
+  playbackErrors: string[];
+  lastSync: number;
+  nodeOffline: boolean;
   setRoom: (room: Room) => void;
   openTitle: (id: string) => void;
   closeTitle: () => void;
@@ -193,6 +203,13 @@ type CinevoState = {
   clearLocalData: () => void;
   noteVisit: () => void;
   finishOnboarding: () => void;
+  enterPreview: () => void;
+  leavePreview: () => void;
+  markOffline: (id: string) => void;
+  forgetOffline: (id: string) => void;
+  notePlaybackError: (id: string) => void;
+  setNodeOffline: (offline: boolean) => void;
+  touchSync: () => void;
 };
 
 export const DEFAULT_LIBRARIES: Library[] = [];
@@ -206,10 +223,14 @@ const DEFAULT_PREFS: Preferences = {
   dashboardWidgets: [...DEFAULT_DASHBOARD_WIDGETS],
   introSkip: 0,
   subtitleOffset: 0,
+  subtitleSize: 100,
+  subtitleColor: "#ffffff",
+  subtitleBg: 0.55,
+  gamification: true,
   libraryView: "grid",
   librarySort: "title",
   mix: "premiere",
-  ambience: true,
+  ambience: false,
   denoise: true,
   eqLow: 0,
   eqMid: 0,
@@ -409,18 +430,30 @@ export const useCinevo = create<CinevoState>()(
       plays: [],
       patches: {},
       house: EMPTY_HOUSE,
-      setRoom: (room) => set({ room, selectedId: null }),
+      previewHouse: false,
+      offlineIds: [],
+      playbackErrors: [],
+      lastSync: 0,
+      nodeOffline: false,
+      setRoom: (room) => {
+        const cur = get();
+        if (cur.room === room && !cur.selectedId) return;
+        set({ room, selectedId: null });
+      },
       openTitle: (id) =>
         set({ selectedId: id, searchOpen: false, settingsOpen: false, coreOpen: false, noticesOpen: false }),
       closeTitle: () => set({ selectedId: null }),
       play: (id) => {
+        const preview = isPreviewId(id);
         const p = get().progress[id] ?? 0;
         set({
           playingId: id,
           playing: true,
           selectedId: null,
           progress: p >= 100 ? { ...get().progress, [id]: 0 } : get().progress,
-          plays: [{ id: `play-${Date.now()}`, titleId: id, at: Date.now() }, ...get().plays].slice(0, 200),
+          plays: preview
+            ? get().plays
+            : [{ id: `play-${Date.now()}`, titleId: id, at: Date.now() }, ...get().plays].slice(0, 200),
         });
       },
       stopPlay: () => set({ playingId: null, playing: false }),
@@ -784,6 +817,10 @@ export const useCinevo = create<CinevoState>()(
           plays: [],
           patches: {},
           house: EMPTY_HOUSE,
+          previewHouse: false,
+          offlineIds: [],
+          playbackErrors: [],
+          lastSync: 0,
           prefs: { ...get().prefs, theme: get().prefs.theme, dashboardWidgets: [...DEFAULT_DASHBOARD_WIDGETS] },
         });
         try {
@@ -803,6 +840,41 @@ export const useCinevo = create<CinevoState>()(
         set({ house: { ...get().house, visits } });
       },
       finishOnboarding: () => set({ house: { ...get().house, onboarded: true } }),
+      enterPreview: () =>
+        set({
+          previewHouse: true,
+          room: "stage",
+          house: { ...get().house, onboarded: true },
+          searchOpen: false,
+          settingsOpen: false,
+          coreOpen: false,
+        }),
+      leavePreview: () => {
+        const drop = (id: string) => !isPreviewId(id);
+        const progress = withoutPreviewProgress(get().progress);
+        set({
+          previewHouse: false,
+          progress,
+          favorites: withoutPreviewIds(get().favorites),
+          tonight: withoutPreviewIds(get().tonight),
+          plays: get().plays.filter((row) => drop(row.titleId)),
+          playingId: isPreviewId(get().playingId) ? null : get().playingId,
+          playing: isPreviewId(get().playingId) ? false : get().playing,
+          selectedId: isPreviewId(get().selectedId) ? null : get().selectedId,
+          room: "sidebar",
+        });
+      },
+      markOffline: (id) => {
+        if (get().offlineIds.includes(id)) return;
+        set({ offlineIds: [...get().offlineIds, id].slice(0, 40) });
+      },
+      forgetOffline: (id) => set({ offlineIds: get().offlineIds.filter((item) => item !== id) }),
+      notePlaybackError: (id) => {
+        if (!id || isPreviewId(id) || get().playbackErrors.includes(id)) return;
+        set({ playbackErrors: [...get().playbackErrors, id].slice(-40) });
+      },
+      setNodeOffline: (offline) => set({ nodeOffline: offline }),
+      touchSync: () => set({ lastSync: Date.now(), nodeOffline: false }),
     }),
     {
       name: "cinevo-local-v4",
@@ -814,7 +886,7 @@ export const useCinevo = create<CinevoState>()(
         return {
           ...current,
           ...p,
-          tonight: Array.isArray(p.tonight) ? p.tonight : [],
+          tonight: withoutPreviewIds(Array.isArray(p.tonight) ? p.tonight : []),
           notes: Array.isArray(p.notes) ? p.notes : [],
           party: p.party ?? null,
           mood: p.mood ?? "all",
@@ -855,7 +927,14 @@ export const useCinevo = create<CinevoState>()(
           activeSourceId: typeof p.activeSourceId === "string" ? p.activeSourceId : "all",
           collections: Array.isArray(p.collections) ? p.collections : [],
           markers: Array.isArray(p.markers) ? p.markers : [],
-          plays: Array.isArray(p.plays) ? p.plays : [],
+          progress: withoutPreviewProgress(p.progress && typeof p.progress === "object" ? p.progress : {}),
+          favorites: withoutPreviewIds(Array.isArray(p.favorites) ? p.favorites : []),
+          previewHouse: p.previewHouse === true,
+          offlineIds: Array.isArray(p.offlineIds) ? p.offlineIds.filter((id) => typeof id === "string").slice(0, 40) : [],
+          playbackErrors: Array.isArray(p.playbackErrors) ? p.playbackErrors.filter((id) => typeof id === "string" && !isPreviewId(id)).slice(-40) : [],
+          lastSync: typeof p.lastSync === "number" ? p.lastSync : 0,
+          nodeOffline: false,
+          plays: Array.isArray(p.plays) ? p.plays.filter((row) => row && !isPreviewId(row.titleId)) : [],
           patches: p.patches && typeof p.patches === "object" ? p.patches : {},
           house: {
             onboarded:
@@ -876,12 +955,16 @@ export const useCinevo = create<CinevoState>()(
             audioHints: p.prefs?.audioHints ?? true,
             introSkip: clampNumber(p.prefs?.introSkip, 0, 180, 0),
             subtitleOffset: clampNumber(p.prefs?.subtitleOffset, -15, 15, 0),
+            subtitleSize: clampNumber(p.prefs?.subtitleSize, 70, 180, 100),
+            subtitleColor: typeof p.prefs?.subtitleColor === "string" ? p.prefs.subtitleColor : "#ffffff",
+            subtitleBg: clampNumber(p.prefs?.subtitleBg, 0, 1, 0.55),
+            gamification: p.prefs?.gamification !== false,
             libraryView: p.prefs?.libraryView === "list" || p.prefs?.libraryView === "hybrid" ? p.prefs.libraryView : "grid",
             librarySort: (["year", "added", "rating", "runtime"] as const).includes(p.prefs?.librarySort as "year")
               ? (p.prefs?.librarySort as LibrarySort)
               : "title",
             mix: mixMode(p.prefs?.mix),
-            ambience: p.prefs?.ambience !== false,
+            ambience: false,
             denoise: p.prefs?.denoise !== false,
             eqLow: clampEq(p.prefs?.eqLow),
             eqMid: clampEq(p.prefs?.eqMid),
@@ -890,14 +973,19 @@ export const useCinevo = create<CinevoState>()(
         };
       },
       partialize: (s) => ({
-        progress: s.progress,
-        favorites: s.favorites,
+        progress: withoutPreviewProgress(s.progress),
+        favorites: withoutPreviewIds(s.favorites),
+        tonight: withoutPreviewIds(s.tonight),
+        plays: s.plays.filter((row) => !isPreviewId(row.titleId)),
+        previewHouse: s.previewHouse,
+        offlineIds: s.offlineIds,
+        playbackErrors: s.playbackErrors.filter((id) => !isPreviewId(id)),
+        lastSync: s.lastSync,
         prefs: s.prefs,
         libraries: s.libraries,
         invites: s.invites,
         notices: s.notices,
         aiConsent: s.aiConsent,
-        tonight: s.tonight,
         notes: s.notes,
         party: s.party,
         mood: s.mood,
@@ -916,7 +1004,6 @@ export const useCinevo = create<CinevoState>()(
         activeSourceId: s.activeSourceId,
         collections: s.collections,
         markers: s.markers,
-        plays: s.plays,
         patches: s.patches,
         house: s.house,
         room: s.room,
@@ -927,12 +1014,15 @@ export const useCinevo = create<CinevoState>()(
 
 export function titleById(id: string | null): Title | undefined {
   if (!id) return undefined;
+  const preview = previewTitle(id);
+  if (preview) return preview;
   const s = useCinevo.getState();
   return s.localTitles.find((t) => t.id === id) ?? s.remoteTitles.find((t) => t.id === id);
 }
 
 export function libraryPool(): Title[] {
   const s = useCinevo.getState();
+  if (s.previewHouse) return PREVIEW_TITLES;
   return [...s.localTitles, ...s.remoteTitles];
 }
 

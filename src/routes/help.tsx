@@ -8,7 +8,7 @@ function Help() {
     <PublicFrame
       kicker="HELP"
       title="How the house works."
-      lede="CINEVO only shows media you connect. There is no public catalog and no sample library."
+      lede="CINEVO only shows media you connect. Preview House is labelled, uses licensed shorts, and is not your library."
     >
       <section>
         <h2>Sign in</h2>
@@ -31,6 +31,22 @@ function Help() {
         <p>
           Sharing sends a catalog invite, not the files. Open <Link to="/app" search={{ core: "sharing" }}>Sharing</Link> after you sign in.
         </p>
+      </section>
+      <section>
+        <h2>Preview House</h2>
+        <p>After you sign in, Enter Preview House plays three Creative Commons shorts from the Blender Foundation. A banner stays on screen. Progress there is not written into your library. Connect your real library to leave it.</p>
+      </section>
+      <section>
+        <h2>Away from home</h2>
+        <p>Node listens on this computer. CINEVO does not open a router port. Use Tailscale, WireGuard, or your own reverse proxy, then pair the phone to that private address. Settings has a button that copies these notes.</p>
+      </section>
+      <section>
+        <h2>Offline</h2>
+        <p>Titles you have already loaded stay in this browser. If Node is down, a limited-mode note appears. Save for offline keeps a copy of a preview file on this device only. Remove from device deletes that copy. Your own server files are not uploaded anywhere.</p>
+      </section>
+      <section>
+        <h2>Your house</h2>
+        <p>Streaks and badges are calculated only from this account. There is no leaderboard. Turn Personal milestones off in Settings to hide them.</p>
       </section>
       <section>
         <h2>Node and the remote</h2>

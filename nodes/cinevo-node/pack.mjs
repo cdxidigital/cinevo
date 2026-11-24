@@ -90,7 +90,10 @@ function verifyBinary(file, kind) {
   console.log(`verified ${kind}: ${path.basename(file)} (${buf.length} bytes)`);
 }
 
-function brandWindowsExe(exePath) {
+function brandWindowsExe(exePath, meta = {}) {
+  const product = meta.product || "CINEVO";
+  const fileName = meta.file || "cinevo-node.exe";
+  const description = meta.description || "CINEVO";
   const ResEdit = require("resedit");
   const data = fs.readFileSync(exePath);
   const NtExecutable = ResEdit.NtExecutable || ResEdit.default?.NtExecutable;
@@ -114,23 +117,23 @@ function brandWindowsExe(exePath) {
     vi.setStringValues(
       { lang: 1033, codepage: 1200 },
       {
-        FileDescription: "CINEVO",
-        ProductName: "CINEVO",
-        CompanyName: "CDXI",
-        LegalCopyright: "CDXI. Distributed as a Fourtee2 Digital project.",
-        OriginalFilename: "cinevo-node.exe",
-        InternalName: "CINEVO",
+        FileDescription: description,
+        ProductName: product,
+        CompanyName: "cdxidigital",
+        LegalCopyright: "Published by fourtee2digital. Developed by cdxidigital.",
+        OriginalFilename: fileName,
+        InternalName: product,
         FileVersion: VERSION,
         ProductVersion: VERSION,
-        Comments: "CINEVO server for this computer. It does not change other programs.",
+        Comments: "Published by fourtee2digital. Developed by cdxidigital.",
       },
     );
     vi.outputToResourceEntries(res.entries);
   }
   const manifest = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <assemblyIdentity type="win32" name="CINEVO" version="${VERSION}.0" processorArchitecture="amd64"/>
-  <description>CINEVO</description>
+  <assemblyIdentity type="win32" name="${product.replace(/[^A-Za-z0-9 ._-]/g, "")}" version="${VERSION}.0" processorArchitecture="amd64"/>
+  <description>${description.replace(/[<>&]/g, "")}</description>
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
     <security>
       <requestedPrivileges>
@@ -170,7 +173,7 @@ function ensureJsign() {
   throw new Error("Could not download jsign for Authenticode signing");
 }
 
-function signWindows(exePath) {
+function signWindows(exePath, displayName = "CINEVO") {
   const certDir = path.join(tools, "certs");
   fs.mkdirSync(certDir, { recursive: true });
   const key = path.join(certDir, "cinevo-node.key");
@@ -227,7 +230,7 @@ function signWindows(exePath) {
     "--alg",
     "SHA-256",
     "--name",
-    "CINEVO",
+    displayName,
     "--url",
     "https://www.fourtee2.digital",
     exePath,
@@ -500,9 +503,14 @@ function wrapLinux(binary) {
 
 if (process.argv[2] === "--sign-exe") {
   const exePath = process.argv[3];
-  if (!exePath) throw new Error("usage: node pack.mjs --sign-exe <cinevo-node.exe>");
-  brandWindowsExe(exePath);
-  signWindows(exePath);
+  if (!exePath) throw new Error("usage: node pack.mjs --sign-exe <exe> [product] [filename] [description]");
+  const meta = {
+    product: process.argv[4] || "CINEVO",
+    file: process.argv[5] || "cinevo-node.exe",
+    description: process.argv[6] || "CINEVO",
+  };
+  brandWindowsExe(exePath, meta);
+  signWindows(exePath, meta.product);
   process.exit(0);
 }
 

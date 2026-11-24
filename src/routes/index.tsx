@@ -125,7 +125,7 @@ function Home() {
               <span className="public-kicker">GLASS THEMES</span>
               <h2 id="home-reel-title">Eight houses. Pick the mood.</h2>
             </div>
-            <p>Eight looks. Same layout. Titles, buttons, and the mark stay easy to read.</p>
+            <p>Eight looks. Same layout. Titles, buttons, and the mark stay easy to read. Nothing plays until you connect a library, or open the labelled Preview House after you sign in.</p>
           </Reveal>
           <div className="theme-rail" role="listbox" aria-label="Glass themes">
             {THEMES.map((item) => (
@@ -190,7 +190,7 @@ function Home() {
             <p className="public-kicker mt-14">CINEVO PLAYER</p>
             <h2 className="mt-4 font-ui text-3xl font-semibold tracking-tight md:text-4xl">One player. Every screen.</h2>
             <p className="mt-3 mb-6 max-w-xl text-sm text-cine-muted">
-              One player for the web, a phone, and a television. The files stay on the server you choose.
+              One player for Windows, the web, a phone, and a television. The Android remote is a separate signed app. The files stay on the server you choose.
             </p>
             <PhoneApps />
           </Reveal>
@@ -226,11 +226,11 @@ function Home() {
             <Link to="/legal/terms">Terms</Link>
           </nav>
           <p className="public-footer__credit">
-            CINEVO - a{" "}
+            CINEVO — published by{" "}
             <a href="https://www.fourtee2.digital" target="_blank" rel="noreferrer">
               fourtee2digital
-            </a>{" "}
-            project
+            </a>
+            , developed by cdxidigital
           </p>
         </div>
         <EnterHouse className="public-footer__enter" label="Enter CINEVO" />

@@ -2,9 +2,7 @@ import type { Title } from "./catalog.ts";
 import { onDeck, organizeLibrary } from "./plex-shelf.ts";
 import { planPremiere, watchedRatio, type PremierePlan, type PremiereTitle } from "./premiere.ts";
 
-function houseMix(theme: string): NonNullable<PremierePlan["mix"]> {
-  if (theme === "ember" || theme === "grove") return "night";
-  if (theme === "ink") return "dialogue";
+function houseMix(_theme: string): NonNullable<PremierePlan["mix"]> {
   return "premiere";
 }
 
@@ -29,6 +27,20 @@ function asTitle(title: PremiereTitle): Title {
     folder: title.folder,
     path: title.path,
   };
+}
+
+function minutesOf(runtime?: string) {
+  const match = runtime?.match(/(\d+)\s*m/i);
+  return match ? Number(match[1]) : null;
+}
+
+function genreOf(title: PremiereTitle) {
+  return title.genre.trim().toLowerCase();
+}
+
+function filmsLike(seed: PremiereTitle, pool: PremiereTitle[]) {
+  const genre = genreOf(seed);
+  return pool.filter((title) => title.id !== seed.id && title.kind !== "series" && genre && genreOf(title) === genre && watchedRatio(title.progress) < 0.9);
 }
 
 function percent(titles: PremiereTitle[]) {
@@ -98,10 +110,10 @@ export function runAttendant(question: string, titles: PremiereTitle[]): Premier
       const queue = rows.slice(start < 0 ? 0 : start, (start < 0 ? 0 : start) + 6);
       const play = queue[0];
       if (play) {
-        return seat(`The rest of ${show.title}, from ${play.title}.`, play, queue, "ink", "night", [
+        return seat(`The rest of ${show.title}, from ${play.title}.`, play, queue, "ink", "premiere", [
           `Opened ${show.title}`,
           `Queued ${queue.length} episode${queue.length === 1 ? "" : "s"} still ahead`,
-          "Ink glass, night mix, denoise on",
+          "Ink glass, denoise on",
         ]);
       }
     }
@@ -115,9 +127,67 @@ export function runAttendant(question: string, titles: PremiereTitle[]): Premier
       })
       .sort((a, b) => watchedRatio(b.progress) - watchedRatio(a.progress))[0];
     if (open) {
-      return seat(`Picking up ${open.title}, at ${Math.round(watchedRatio(open.progress) * 100)}%.`, open, [open], "ember", "night", [
+      return seat(`Picking up ${open.title}, at ${Math.round(watchedRatio(open.progress) * 100)}%.`, open, [open], "ember", "premiere", [
         "Found the title you had started",
-        "Ember glass, night mix, denoise on",
+        "Ember glass, denoise on",
+      ]);
+    }
+  }
+
+  if (/unwatched|haven'?t seen|not seen|new to me/.test(q)) {
+    const fresh = pool
+      .filter((title) => title.kind !== "series" && watchedRatio(title.progress) < 0.02)
+      .sort((a, b) => b.rating - a.rating || a.title.localeCompare(b.title));
+    const play = fresh[0];
+    if (play) {
+      return seat(`Unwatched. ${play.title}.`, play, fresh.slice(0, 4), "lilac", "premiere", [
+        "Skipped anything already started",
+        `Opened ${play.title}`,
+        "Lilac glass, premiere mix, denoise on",
+      ]);
+    }
+  }
+
+  if (/something like the last|like the last|similar to what/.test(q)) {
+    const started = [...pool]
+      .filter((title) => title.kind !== "series" && watchedRatio(title.progress) > 0.02)
+      .sort((a, b) => watchedRatio(b.progress) - watchedRatio(a.progress))[0];
+    const kin = started ? filmsLike(started, pool) : [];
+    const play = kin[0];
+    if (started && play) {
+      return seat(`In the same room as ${started.title}. ${play.title}.`, play, [play, ...kin.slice(1, 3)], "rose", "premiere", [
+        `Matched the genre of ${started.title}`,
+        `Next is ${play.title}`,
+        "Rose glass, denoise on",
+      ]);
+    }
+  }
+
+  if (/surprise/.test(q)) {
+    const open = pool
+      .filter((title) => title.kind !== "series" && watchedRatio(title.progress) < 0.9)
+      .sort((a, b) => b.rating - a.rating || a.title.localeCompare(b.title));
+    const play = open[1] || open[0];
+    if (play) {
+      return seat(`A surprise from the shelf. ${play.title}.`, play, open.slice(0, 3), "grove", "premiere", [
+        "Left the obvious first choice",
+        `Opened ${play.title}`,
+        "Grove glass, denoise on",
+      ]);
+    }
+  }
+
+  if (/under ninety|under 90|short sitting|short film/.test(q)) {
+    const brief = pool.filter((title) => {
+      const minutes = minutesOf(title.runtime);
+      return watchedRatio(title.progress) < 0.9 && (title.kind === "series" || (minutes !== null && minutes <= 90));
+    });
+    const play = brief[0];
+    if (play) {
+      return seat(`A short sitting. ${play.title}.`, play, brief.slice(0, 4), "harbor", "premiere", [
+        "Kept it to a series episode or under ninety minutes",
+        `Opened ${play.title}`,
+        "Harbor glass, premiere mix, denoise on",
       ]);
     }
   }

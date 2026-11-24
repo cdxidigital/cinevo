@@ -11,10 +11,10 @@ test("night mix holds peaks harder than premiere", () => {
   assert.ok(mixSettings("dialogue").presence > premiere.presence);
 });
 
-test("comfort themes use the night mix", () => {
-  assert.equal(mixForTheme("ember"), "night");
+test("themes stay on the premiere mix", () => {
+  assert.equal(mixForTheme("ember"), "premiere");
   assert.equal(mixForTheme("gilt"), "premiere");
-  assert.equal(mixForTheme("ink"), "dialogue");
+  assert.equal(mixForTheme("ink"), "premiere");
 });
 
 test("denoise opens the gate and the equalizer still takes a nudge", () => {

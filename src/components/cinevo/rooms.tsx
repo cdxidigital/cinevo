@@ -22,6 +22,7 @@ import { openCast } from "./cast-sheet";
 import { Rail, ArtImage, CoverImg, LibraryBoard, SeenBar } from "./poster";
 import { AddLibrary } from "./add-library";
 import { ToolsRoom } from "./tools-room";
+import { personalBadges, watchStreak } from "@/lib/milestones";
 import { BrandKicker } from "./logo";
 import { CoreModal, Detail, NoticesOverlay, SearchOverlay, SettingsModal } from "./overlays";
 
@@ -322,6 +323,11 @@ export function StageRoom() {
   const shufflePlay = useCinevo((s) => s.shufflePlay);
   const setCoreOpen = useCinevo((s) => s.setCoreOpen);
   const setRoom = useCinevo((s) => s.setRoom);
+  const enterPreview = useCinevo((s) => s.enterPreview);
+  const aiConsent = useCinevo((s) => s.aiConsent);
+  const gamification = useCinevo((s) => s.prefs.gamification);
+  const visits = useCinevo((s) => s.house.visits);
+  const offlineIds = useCinevo((s) => s.offlineIds);
   const sourceFilter = useCinevo((s) => s.sourceFilter);
   const setSourceFilter = useCinevo((s) => s.setSourceFilter);
   const setMood = useCinevo((s) => s.setMood);
@@ -430,8 +436,8 @@ export function StageRoom() {
                   onPlay={() => setRoom("sidebar")}
                   playLabel="Add library"
                   playIcon={false}
-                  onMore={() => setCoreOpen(true, "libraries")}
-                  moreLabel="Open Core"
+                  onMore={() => enterPreview()}
+                  moreLabel="Enter Preview House"
                 />
               ) : (
                 <div className="mt-8 h-11 w-48 animate-pulse rounded-md bg-cine-surface" />
@@ -484,6 +490,11 @@ export function StageRoom() {
                 />
               </div>
 
+              {gamification ? (
+                <HouseMarks titles={visible} progress={progress} favorites={favorites} offlineIds={offlineIds} plays={plays.length} visits={visits} />
+              ) : null}
+              {aiConsent ? <PrivateShelves titles={visible} /> : null}
+
               <div className="house-library">
                 <HouseCard />
                 <OsDeck
@@ -503,7 +514,12 @@ export function StageRoom() {
                   {played.length ? <Rail heading="Most played here" titles={played} /> : null}
                   {addedMovies.length ? <Rail heading="Recently added movies" titles={addedMovies} /> : null}
                   {addedTv.length ? <Rail heading="Recently added TV" titles={addedTv} /> : null}
-                  {suggestions.length ? <Rail heading="For you" titles={suggestions} /> : null}
+                  {suggestions.length ? (
+                    <Rail
+                      heading={aiConsent ? "For you · from genres you already play" : "For you"}
+                      titles={suggestions}
+                    />
+                  ) : null}
                   {myList.length ? <Rail heading="My List" titles={myList} /> : null}
                   {collections.map((collection) => {
                     const titles = collection.titleIds
@@ -834,6 +850,7 @@ export function BrowseRoom({ kind: initialKind = "all" }: { kind?: "all" | "movi
         />
         )}
       </div>
+      <div className="gallery-scroll">
       {kind === "folders" ? (
         <FolderBrowser
           titles={library.filter((title) => {
@@ -870,6 +887,7 @@ export function BrowseRoom({ kind: initialKind = "all" }: { kind?: "all" | "movi
           ) : null}
         </>
       )}
+      </div>
     </div>
   );
 }
@@ -896,6 +914,73 @@ export function SidebarRoom() {
         </div>
       ) : null}
     </div>
+  );
+}
+
+function HouseMarks({
+  titles,
+  progress,
+  favorites,
+  offlineIds,
+  plays,
+  visits,
+}: {
+  titles: Title[];
+  progress: Record<string, number>;
+  favorites: string[];
+  offlineIds: string[];
+  plays: number;
+  visits: string[];
+}) {
+  const streak = watchStreak(visits);
+  const badges = personalBadges({ titles, progress, favorites, offlineIds, plays });
+  if (!streak && !badges.length) return null;
+  return (
+    <section className="house-marks" aria-label="Your house">
+      <h2 className="rail-heading">Your house</h2>
+      <p className="lede">
+        {streak ? `${streak} day streak. ` : ""}
+        Personal only. Nothing here is compared with anyone else.
+      </p>
+      {badges.length ? (
+        <div className="house-sources">
+          {badges.map((badge) => (
+            <span key={badge.id} className="house-chip" title={badge.detail}>
+              {badge.label}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function PrivateShelves({ titles }: { titles: Title[] }) {
+  const shelves = [
+    {
+      name: "Under 90 minutes",
+      why: "The runtime on the file is ninety minutes or less.",
+      rows: titles.filter((title) => {
+        const minutes = Number((title.runtime || "").match(/(\d+)/)?.[1] || 0);
+        return minutes > 0 && minutes <= 90;
+      }),
+    },
+    {
+      name: "Rainy night",
+      why: "Drama, noir, or mystery already in this house.",
+      rows: titles.filter((title) => /drama|noir|mystery/i.test(`${title.genre} ${(title.genres || []).join(" ")}`)),
+    },
+  ].filter((shelf) => shelf.rows.length);
+  if (!shelves.length) return null;
+  return (
+    <section aria-label="Private collections">
+      {shelves.map((shelf) => (
+        <div key={shelf.name}>
+          <Rail heading={shelf.name} titles={shelf.rows.slice(0, 12)} />
+          <p className="lede">Why this: {shelf.why}</p>
+        </div>
+      ))}
+    </section>
   );
 }
 

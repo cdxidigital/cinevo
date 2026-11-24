@@ -29,3 +29,24 @@ test("a binge queues the rest of the show and nothing invented", () => {
   assert.equal(plan?.playId, "e2");
   assert.equal(plan?.queueIds.includes("film"), false);
 });
+
+test("unwatched skips a film already started", () => {
+  const plan = runAttendant("play an unwatched film", house);
+  assert.equal(plan?.playId, "other");
+});
+
+test("something like the last film stays in genre", () => {
+  const plan = runAttendant("something like the last film I started", [
+    ...house,
+    { id: "kin", title: "Lamp Room", year: "1980", kind: "movie", genre: "Drama", rating: 8, synopsis: "", progress: 0 },
+  ]);
+  assert.equal(plan?.playId, "kin");
+});
+
+test("a short sitting prefers a brief runtime", () => {
+  const plan = runAttendant("a short sitting, under ninety minutes", [
+    { id: "long", title: "The Long Night", year: "1999", kind: "movie", genre: "Drama", rating: 9, synopsis: "", runtime: "148m", progress: 0 },
+    { id: "brief", title: "Intermission", year: "2001", kind: "movie", genre: "Comedy", rating: 7, synopsis: "", runtime: "72m", progress: 0 },
+  ]);
+  assert.equal(plan?.playId, "brief");
+});

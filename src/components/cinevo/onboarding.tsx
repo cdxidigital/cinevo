@@ -17,7 +17,7 @@ const STEPS = [
   {
     kicker: "The night",
     title: "The attendant can run the room.",
-    body: "Ask it to resume, binge, or seat a premiere. Next, on the player, starts the following episode.",
+    body: "Ask it to resume, binge, find something unwatched, or seat a premiere. Next, on the player, starts the following episode.",
   },
 ];
 
@@ -26,6 +26,7 @@ export function Onboarding() {
   const onboarded = useCinevo((s) => s.house.onboarded);
   const playingId = useCinevo((s) => s.playingId);
   const finish = useCinevo((s) => s.finishOnboarding);
+  const enterPreview = useCinevo((s) => s.enterPreview);
   const setRoom = useCinevo((s) => s.setRoom);
   const [step, setStep] = useState(0);
   if (!hydrated || onboarded || playingId) return null;
@@ -43,6 +44,9 @@ export function Onboarding() {
         <div className="mt-6 flex flex-wrap gap-2">
           <button type="button" className="house-btn house-btn--ghost" onClick={() => finish()}>
             Skip for now
+          </button>
+          <button type="button" className="house-btn house-btn--ghost" onClick={() => enterPreview()}>
+            Enter Preview House
           </button>
           {last ? (
             <button

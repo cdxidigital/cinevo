@@ -1,18 +1,28 @@
 {
   "version": "0.2.0",
-  "builtAt": "2026-09-15T22:25:07.810Z",
+  "builtAt": "2026-10-12T00:00:00.000Z",
   "port": 48184,
   "bind": "127.0.0.1",
   "icon": "/node-icon.png",
+  "publisher": "fourtee2digital",
+  "developer": "cdxidigital",
   "signed": {
     "windows": "authenticode:CINEVO",
+    "windowsPlayer": "authenticode:CINEVO Player",
+    "android": "apksigner v1+v2+v3",
+    "androidRemote": "apksigner v1+v2+v3",
+    "androidTv": "apksigner v1+v2+v3",
     "mac": "ad-hoc Mach-O signature via ldid + AppIcon.icns",
     "linux": "ELF x64 for Linux and NAS"
   },
   "installers": {
     "windowsX64": "/installers/CINEVO-Node-Windows-x64.zip",
+    "windowsPlayer": "/installers/CINEVO-Player-Windows-x64.exe",
     "macAppleSilicon": "/installers/CINEVO-Node-macOS-Apple-Silicon.zip",
     "macIntel": "/installers/CINEVO-Node-macOS-Intel.zip",
-    "linuxX64": "/installers/CINEVO-Node-Linux-x64.zip"
+    "linuxX64": "/installers/CINEVO-Node-Linux-x64.zip",
+    "android": "/installers/CINEVO.apk",
+    "androidRemote": "/installers/CINEVO-Remote.apk",
+    "androidTv": "/installers/CINEVO-TV.apk"
   }
 }

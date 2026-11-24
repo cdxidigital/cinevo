@@ -18,10 +18,8 @@ export type MixSettings = {
 
 export type EqOffset = { low: number; mid: number; high: number };
 
-const MODES = new Set<MixMode>(["premiere", "night", "dialogue", "flat"]);
-
 export function mixMode(value: unknown): MixMode {
-  return typeof value === "string" && MODES.has(value as MixMode) ? (value as MixMode) : "premiere";
+  return value === "premiere" ? "premiere" : "premiere";
 }
 
 export function clampEq(value: unknown) {
@@ -71,9 +69,7 @@ export function gateGain(level: number, openAt: number) {
   return 0.08 + ((level - floor) / (openAt - floor)) * 0.92;
 }
 
-export function mixForTheme(theme: string): MixMode {
-  if (theme === "ember" || theme === "grove") return "night";
-  if (theme === "ink") return "dialogue";
+export function mixForTheme(_theme: string): MixMode {
   return "premiere";
 }
 

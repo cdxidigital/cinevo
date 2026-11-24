@@ -10,7 +10,7 @@ import { CastSheet } from "@/components/cinevo/cast-sheet";
 import { Keys } from "@/components/cinevo/keys";
 import { RemoteBridge } from "@/components/cinevo/remote-bridge";
 import { Logo } from "@/components/cinevo/logo";
-import { appDestination, roomFromParam } from "@/lib/app-destination";
+import { appDestination, paramFromRoom, roomFromParam } from "@/lib/app-destination";
 import { useCinevo } from "@/lib/cinevo-store";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { authClient, getBearerToken } from "@/lib/auth/client";
@@ -44,14 +44,36 @@ function Cinema() {
   const room = useCinevo((s) => s.room);
   const setRoom = useCinevo((s) => s.setRoom);
   const setCoreOpen = useCinevo((s) => s.setCoreOpen);
+  const openTitle = useCinevo((s) => s.openTitle);
+  const closeTitle = useCinevo((s) => s.closeTitle);
+  const play = useCinevo((s) => s.play);
+  const stopPlay = useCinevo((s) => s.stopPlay);
   const search = Route.useSearch();
   const navigate = useNavigate();
 
   useEffect(() => {
+    const state = useCinevo.getState();
     const next = roomFromParam(search.room);
-    if (next) setRoom(next);
-    if (search.core) setCoreOpen(true, search.core);
-  }, [search.room, search.core, setRoom, setCoreOpen]);
+    if (next && next !== state.room) setRoom(next);
+    if (search.core) {
+      if (!state.coreOpen || state.coreTab !== search.core) setCoreOpen(true, search.core);
+    } else if (state.coreOpen) {
+      setCoreOpen(false);
+    }
+    const latest = useCinevo.getState();
+    if (search.watch) {
+      if (latest.playingId !== search.watch) play(search.watch);
+      if (latest.selectedId) closeTitle();
+    } else if (latest.playingId) {
+      stopPlay();
+    }
+    const afterPlay = useCinevo.getState();
+    if (!search.watch && search.title) {
+      if (afterPlay.selectedId !== search.title) openTitle(search.title);
+    } else if (afterPlay.selectedId) {
+      closeTitle();
+    }
+  }, [search.room, search.core, search.title, search.watch, setRoom, setCoreOpen, openTitle, closeTitle, play, stopPlay]);
 
   useEffect(() => {
     try {
@@ -62,18 +84,36 @@ function Cinema() {
   }, []);
 
   useEffect(() => {
+    let queued = false;
     return useCinevo.subscribe((state, prev) => {
-      if (state.coreOpen === prev.coreOpen && state.coreTab === prev.coreTab) return;
-      const core = state.coreOpen && state.coreTab !== "operations" ? state.coreTab : undefined;
-      void navigate({
-        to: "/app",
-        search: (prevSearch) => {
-          const next = { ...prevSearch };
-          if (core) next.core = core;
-          else delete next.core;
-          return next;
-        },
-        replace: true,
+      if (
+        state.room === prev.room &&
+        state.coreOpen === prev.coreOpen &&
+        state.coreTab === prev.coreTab &&
+        state.selectedId === prev.selectedId &&
+        state.playingId === prev.playingId
+      ) {
+        return;
+      }
+      if (queued) return;
+      queued = true;
+      queueMicrotask(() => {
+        queued = false;
+        const latest = useCinevo.getState();
+        const room = paramFromRoom(latest.room);
+        const core = latest.coreOpen && latest.coreTab !== "operations" ? latest.coreTab : undefined;
+        const watch = latest.playingId || undefined;
+        const title = !watch && latest.selectedId ? latest.selectedId : undefined;
+        void navigate({
+          to: "/app",
+          search: {
+            ...(room ? { room } : {}),
+            ...(core ? { core } : {}),
+            ...(title ? { title } : {}),
+            ...(watch ? { watch } : {}),
+          },
+          replace: true,
+        });
       });
     });
   }, [navigate]);
@@ -92,6 +132,8 @@ function Cinema() {
           mode: "in",
           ...(search.room ? { room: search.room } : {}),
           ...(search.core ? { core: search.core } : {}),
+          ...(search.title ? { title: search.title } : {}),
+          ...(search.watch ? { watch: search.watch } : {}),
         }}
       />
     );

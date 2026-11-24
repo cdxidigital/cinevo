@@ -354,7 +354,7 @@ export function PasskeyLogin({
           {showQr ? (
             <div className="passkey-qr__sheet">
               <div dangerouslySetInnerHTML={{ __html: qr }} />
-              <p>Scan with a phone that is already signed in to this house. Approve there, and this screen uses the same account.</p>
+              <p>Open this on your phone and sign in there. This screen uses the same account.</p>
             </div>
           ) : null}
         </div>

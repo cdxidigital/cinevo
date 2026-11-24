@@ -1,11 +1,10 @@
-import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { Cast, Check, ChevronLeft, ListPlus, Play, Search, Star, X } from "lucide-react";
 import { filterCatalog, similarTo, type Title } from "@/lib/catalog";
 import { libraryPool, titleById, useCinevo } from "@/lib/cinevo-store";
+import { useLibrary } from "@/lib/use-library";
 import { askCinevo } from "@/lib/ask-cinevo";
 import type { PremierePlan } from "@/lib/premiere";
-import { mixForTheme } from "@/lib/house-mix";
 import { Rail, ArtImage } from "./poster";
 import { InstallerCards } from "./installers";
 import { HouseRemote, InstallCinevo } from "./house-remote";
@@ -40,7 +39,17 @@ export function Detail() {
   useEffect(() => {
     setNote("");
   }, [id]);
-  if (!title) return null;
+  if (!title) {
+    return (
+      <div className="house-page house-page--flow">
+        <button type="button" onClick={closeTitle} className="house-back">
+          <ChevronLeft size={16} /> Back
+        </button>
+        <h1>That title is not in this house.</h1>
+        <p className="lede">It may belong to a library that is not connected, or Preview House was left.</p>
+      </div>
+    );
+  }
   const similar = similarTo(title, libraryPool());
   const director = title.director && title.director !== title.sourceLabel ? title.director : "";
   const genres = (title.genres || []).filter((genre) => genre && genre !== title.sourceLabel && genre !== "Plex" && genre !== "Jellyfin");
@@ -165,15 +174,13 @@ export function SearchOverlay() {
   const setLibraryQuery = useCinevo((s) => s.setLibraryQuery);
   const setRoom = useCinevo((s) => s.setRoom);
   const openTitle = useCinevo((s) => s.openTitle);
-  const navigate = useNavigate();
   const [q, setQ] = useState("");
-  const extra = useCinevo((s) => s.localTitles);
-  const remote = useCinevo((s) => s.remoteTitles);
+  const library = useLibrary();
   const results = useMemo(() => {
     const query = q.trim();
     if (!query) return [];
-    return filterCatalog({ query, pool: [...extra, ...remote] }).slice(0, 24);
-  }, [q, extra, remote]);
+    return filterCatalog({ query, pool: library }).slice(0, 24);
+  }, [q, library]);
   useEffect(() => {
     if (!open) setQ("");
   }, [open]);
@@ -183,7 +190,6 @@ export function SearchOverlay() {
     setLibraryQuery(query);
     setRoom("browse");
     setSearchOpen(false);
-    void navigate({ to: "/app", search: { room: "browse" } });
   };
   if (!open) return null;
   return (
@@ -210,7 +216,7 @@ export function SearchOverlay() {
           </button>
         </div>
         <p className="mt-3 font-mono text-xs text-cine-faint">
-          {extra.length + remote.length === 0
+          {library.length === 0
             ? "Nothing in your library yet."
             : !q.trim()
               ? "Type a title, person, year, folder, or studio."
@@ -419,8 +425,8 @@ export function CoreModal() {
       nightMode: true,
       zenMode: true,
       focusMode: true,
-      mix: next.mix || mixForTheme(next.theme),
-      ambience: true,
+      mix: "premiere",
+      ambience: false,
       denoise: next.denoise !== false,
     });
     useCinevo.setState({ tonight: next.queueIds.slice(0, 8) });

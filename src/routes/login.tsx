@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { GROK_PROVIDERS, authClient, authEnabled, getBearerToken, rememberSessionToken, sessionTokenFromAuthResponse, signIn } from "@/lib/auth/client";
 import { Logo } from "@/components/cinevo/logo";
@@ -38,7 +38,8 @@ function deskFromLocation() {
 }
 
 function Login() {
-  const { mode: initial, room, core, desk, error: oauthError, ceremony, id } = Route.useSearch();
+  const { mode: initial, room, core, title, watch, desk, error: oauthError, ceremony, id } = Route.useSearch();
+  const navigate = useNavigate();
   const { user, isPending } = useCurrentUserState();
   const [mode, setMode] = useState<"in" | "up">(initial);
   const [email, setEmail] = useState("");
@@ -60,6 +61,8 @@ function Login() {
     const params = new URLSearchParams();
     if (room) params.set("room", room);
     if (core) params.set("core", core);
+    if (title) params.set("title", title);
+    if (watch) params.set("watch", watch);
     window.location.assign(`/app${params.size ? `?${params}` : ""}`);
   };
 
@@ -94,12 +97,14 @@ function Login() {
       const params = new URLSearchParams();
       if (room) params.set("room", room);
       if (core) params.set("core", core);
+      if (title) params.set("title", title);
+      if (watch) params.set("watch", watch);
       window.location.replace(`/app${params.size ? `?${params}` : ""}`);
     })();
     return () => {
       cancel = true;
     };
-  }, [isPending, signedIn, desk, room, core]);
+  }, [isPending, signedIn, desk, room, core, title, watch]);
 
   const afterEmail = async (name: string) => {
     const typed = name.trim();
@@ -199,7 +204,10 @@ function Login() {
         });
         if (err) {
           setError(readableAuthError(err.message, true));
-          if ((err.message || "").toLowerCase().includes("exist")) setMode("in");
+          if ((err.message || "").toLowerCase().includes("exist")) {
+            setMode("in");
+            void navigate({ to: "/login", search: { mode: "in" }, replace: true });
+          }
           return;
         }
         rememberSessionToken(captured || (data && "token" in data ? String(data.token ?? "") : null) || null);
@@ -297,7 +305,7 @@ function Login() {
                   if (!kept) setError("The passkey matched, but this browser did not keep the sign-in. Reload and try again.");
                 }}
               />
-              {error ? <p className="text-sm text-cine-danger">{error}</p> : null}
+              {error ? <p className="text-sm text-cine-danger" role="alert">{error}</p> : null}
               <p className="login-split">or password</p>
               {mode === "in" ? (
                 <input
@@ -331,8 +339,21 @@ function Login() {
               type="button"
               className="login-switch"
               onClick={() => {
-                setMode(mode === "up" ? "in" : "up");
+                const next = mode === "up" ? "in" : "up";
+                setMode(next);
                 setError("");
+                void navigate({
+                  to: "/login",
+                  search: {
+                    mode: next,
+                    ...(desk ? { desk } : {}),
+                    ...(room ? { room } : {}),
+                    ...(core ? { core } : {}),
+                    ...(title ? { title } : {}),
+                    ...(watch ? { watch } : {}),
+                  },
+                  replace: true,
+                });
               }}
             >
               {mode === "up" ? "Already have a house? Sign in" : "New here? Create an account"}
@@ -344,7 +365,7 @@ function Login() {
                   type="button"
                   onClick={() => {
                     void signIn(p.providerId, {
-                      callbackURL: `/app${room || core ? `?${new URLSearchParams({ ...(room ? { room } : {}), ...(core ? { core } : {}) }).toString()}` : ""}`,
+                      callbackURL: `/app${room || core || title || watch ? `?${new URLSearchParams({ ...(room ? { room } : {}), ...(core ? { core } : {}), ...(title ? { title } : {}), ...(watch ? { watch } : {}) }).toString()}` : ""}`,
                     }).catch((err: unknown) => {
                       setError(err instanceof Error ? err.message : "Could not start that sign-in.");
                     });
@@ -361,11 +382,11 @@ function Login() {
         )}
       </div>
       <p className="login-credit">
-        CINEVO - a{" "}
+        CINEVO — published by{" "}
         <a href="https://www.fourtee2.digital" target="_blank" rel="noreferrer">
           fourtee2digital
-        </a>{" "}
-        project
+        </a>
+        , developed by cdxidigital
       </p>
     </main>
   );

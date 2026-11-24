@@ -33,5 +33,4 @@ fi
   --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
   --out "$OUT" "$WORK/aligned.apk"
 "$BT/apksigner" verify --verbose "$OUT"
-cp -f "$OUT" "$ROOT/../../public/installers/CINEVO-Remote.apk"
 echo "wrote $OUT"
